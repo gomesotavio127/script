@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Motor próprio de análise estática Lua/Luau em Rust e WebAssembly, sem IA externa.">
+  <title>Deobfuscator Lab — Motor Rust</title>
+  <style>
+    :root{color-scheme:dark;--bg:#0a0e14;--panel:#111923;--line:#273548;--text:#eaf1fa;--muted:#91a2b7;--accent:#63e6be;--warn:#ffd166;--bad:#ff7b86}
+    *{box-sizing:border-box}body{margin:0;background:radial-gradient(1100px 600px at 15% -10%,#12302d 0,transparent 50%),var(--bg);color:var(--text);font:15px/1.55 system-ui,-apple-system,Segoe UI,sans-serif}
+    main{width:min(1100px,calc(100% - 32px));margin:38px auto 70px}.eyebrow{color:var(--accent);letter-spacing:.17em;font-size:11px;font-weight:800}h1{font-size:clamp(28px,5vw,46px);line-height:1.08;margin:10px 0}h2{font-size:17px;margin:0 0 14px}.muted{color:var(--muted)}.top{display:flex;align-items:flex-start;justify-content:space-between;gap:22px;margin-bottom:28px}.pill{border:1px solid #2e725f;color:var(--accent);border-radius:999px;padding:6px 10px;font-size:12px;white-space:nowrap}
+    .panel{border:1px solid var(--line);background:linear-gradient(160deg,#121d29,#0f151e);border-radius:18px;padding:22px;margin:16px 0;box-shadow:0 10px 35px #0002}.row{display:flex;gap:14px;flex-wrap:wrap;align-items:center}label{display:block;font-weight:700;margin:12px 0 8px}select,input[type=file],textarea{width:100%;border:1px solid #314155;border-radius:10px;background:#0a111a;color:var(--text);padding:11px;font:inherit}select{max-width:300px}textarea{min-height:260px;resize:vertical;font:13px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace}
+    button{border:1px solid #4a8f7a;background:var(--accent);color:#07150f;font-weight:800;border-radius:10px;padding:11px 15px;font:inherit;cursor:pointer}button.secondary{background:#151f2b;color:var(--text);border-color:#35485f}button:disabled{opacity:.45;cursor:not-allowed}
+    .notice{padding:12px 14px;border:1px solid #344458;border-radius:12px;color:var(--muted);font-size:13px}.status{margin-top:12px;color:var(--muted);min-height:24px}.status[data-kind=success]{color:var(--accent)}.status[data-kind=warning]{color:var(--warn)}.status[data-kind=error]{color:var(--bad)}
+    .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:16px 0}.metric{border:1px solid var(--line);padding:10px;border-radius:10px;background:#0c131c}.metric span{display:block;text-transform:capitalize;color:var(--muted);font-size:12px}.metric strong{display:block;overflow-wrap:anywhere}.tag{font-size:12px;color:var(--accent);margin-bottom:6px}.findings{padding-left:20px;color:var(--muted)}.findings li{margin:7px 0}.foot{font-size:12px;color:var(--muted);margin-top:18px}a{color:var(--accent)}
+    @media(max-width:600px){main{width:calc(100% - 20px);margin-top:20px}.panel{padding:15px}.top{display:block}.pill{display:inline-block;margin-top:12px}}
+  </style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <div>
+      <div class="eyebrow">DEOBFUSCATOR LAB / ENGINE 01</div>
+      <h1>Motor próprio<br>Lua &amp; Luau</h1>
+      <p class="muted">Análise estática em Rust + WebAssembly. Sem IA externa, sem API de modelo e sem executar o script analisado.</p>
+    </div>
+    <span class="pill">RUST WASM · V1</span>
+  </header>
+
+  <section class="panel">
+    <h2>Entrada</h2>
+    <div class="notice">Modo conservador: normaliza comentários e literais de strings que consegue interpretar com segurança. Não inventa instruções nem afirma recuperar partes ausentes.</div>
+    <form id="form">
+      <label for="mode">Tipo de entrada</label>
+      <select id="mode">
+        <option value="source">Código-fonte Lua/Luau</option>
+        <option value="bytecode">Bytecode / arquivo binário (inspeção do cabeçalho)</option>
+      </select>
+      <label for="file">Arquivo opcional (.lua, .luau, .txt, .luac, .bytecode)</label>
+      <input id="file" type="file" accept=".lua,.luau,.txt,.luac,.bytecode,.bc,text/plain,application/octet-stream">
+      <label for="source">Código-fonte</label>
+      <textarea id="source" spellcheck="false" placeholder="Cole o código Lua/Luau aqui ou selecione um arquivo acima…"></textarea>
+      <div class="row" style="margin-top:14px">
+        <button id="run" type="submit" disabled>CARREGANDO MOTOR…</button>
+        <button id="clear" class="secondary" type="button">Limpar</button>
+      </div>
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+    </form>
+  </section>
+
+  <section id="results" class="panel" hidden>
+    <div class="tag" id="engineTag"></div>
+    <h2 id="summary">Resultado</h2>
+    <p class="muted" id="format"></p>
+    <div id="metrics" class="metrics"></div>
+    <h2>Achados e avisos</h2>
+    <ul id="findings" class="findings"></ul>
+    <p id="noSourceOutput" class="notice" hidden>Esta versão ainda não descompila instruções de bytecode; mostra apenas o formato/cabeçalho reconhecido e seus limites.</p>
+    <label for="output">Código normalizado (não é descompilação completa)</label>
+    <textarea id="output" spellcheck="false" hidden readonly></textarea>
+    <div class="row" style="margin-top:12px">
+      <button id="copy" type="button" class="secondary" disabled>Copiar código</button>
+      <button id="download" type="button" disabled>Baixar .lua</button>
+    </div>
+  </section>
+
+  <p class="foot">Precisão primeiro: quando o motor não entende uma construção, ele deve preservar o texto e avisar. V1 não implementa descompilação de bytecode, remoção de código morto ou reconstrução de VM. <a href="https://github.com/gomesotavio127/script/tree/deobfuscator-engine-v1/deobfuscator-engine">Código-fonte</a>.</p>
+</main>
+<script src="./app.js"></script>
+</body>
+</html>
