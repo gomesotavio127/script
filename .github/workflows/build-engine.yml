@@ -1,0 +1,40 @@
+name: Build Rust Deobfuscator Engine
+
+on:
+  push:
+    branches:
+      - deobfuscator-engine-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust and WebAssembly target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Run unit tests
+        run: cargo test --manifest-path deobfuscator-engine/Cargo.toml
+      - name: Compile Rust engine to WebAssembly
+        run: cargo build --manifest-path deobfuscator-engine/Cargo.toml --target wasm32-unknown-unknown --release
+      - name: Prepare static deployment
+        run: |
+          mkdir -p dist
+          cp deobfuscator-engine/index.html dist/
+          cp deobfuscator-engine/app.js dist/
+          cp deobfuscator-engine/engine-worker.js dist/
+          cp deobfuscator-engine/target/wasm32-unknown-unknown/release/deobfuscator_engine.wasm dist/engine.wasm
+          printf 'Engine bytes: '; wc -c < dist/engine.wasm
+      - name: Upload deployable site artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deobfuscator-engine-site
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
