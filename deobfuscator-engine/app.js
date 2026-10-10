@@ -83,15 +83,16 @@ function renderResult(result) {
     $("findings").append(li);
   }
 
-  const hasOutput = result.mode === "source" && typeof result.output === "string";
+  const hasOutput = typeof result.output === "string" && result.output.length > 0;
   output.value = hasOutput ? result.output : "";
+  $("outputLabel").textContent = result.mode === "bytecode" ? "Código Luau recuperado" : "Código normalizado (não é descompilação completa)";
   output.hidden = !hasOutput;
   copyButton.disabled = !hasOutput;
   downloadButton.disabled = !hasOutput;
   $("noSourceOutput").hidden = hasOutput;
   setStatus(
     result.mode === "bytecode"
-      ? "Inspeção do cabeçalho concluída. A descompilação de instruções ainda não está implementada."
+      ? (hasOutput ? "Bytecode descompilado pelo motor Rust. Revise o resultado; nomes e comentários originais podem não existir mais." : "O decodificador não conseguiu recuperar código deste arquivo; nenhum resultado foi inventado.")
       : "Análise concluída sem IA externa. Confira os avisos antes de confiar no resultado.",
     result.warnings?.length ? "warning" : "success"
   );
