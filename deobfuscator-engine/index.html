@@ -60,6 +60,14 @@
       <button id="fetchPayload" type="button" class="secondary">IMPORTAR E ANALISAR</button>
       <span id="loaderHelp" class="muted">Obtém somente o texto, sem executar o conteúdo.</span>
     </div>
+    <section id="compatPanel" class="notice" hidden style="margin-top:16px">
+      <h2>Mapa de APIs de ambiente</h2>
+      <p id="compatSummary">Inventário estático de APIs exigidas pelo código, sem executar o script.</p>
+      <textarea id="compatReport" spellcheck="false" readonly style="min-height:180px"></textarea>
+      <div class="row" style="margin-top:10px">
+        <button id="downloadCompat" type="button" class="secondary">Baixar mapa de compatibilidade</button>
+      </div>
+    </section>
     <p id="noSourceOutput" class="notice" hidden>Este arquivo não foi descompilado. Confira o diagnóstico e a versão de bytecode suportada; formatos desconhecidos não produzem código fictício.</p>
     <label id="outputLabel" for="output">Código recuperado (pode ser parcial)</label>
     <textarea id="output" spellcheck="false" hidden readonly></textarea>
