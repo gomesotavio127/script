@@ -29,7 +29,7 @@
 
   <section class="panel">
     <h2>Entrada</h2>
-    <div class="notice">O motor analisa Lua/Luau no navegador via Rust/WebAssembly, sem IA externa e sem executar o script. Para fonte, aplica transformações estáticas comprováveis; bytecode Luau padrão v3–v9 pode ser descompilado. Quando detectar um loader público Jnkie compatível, você poderá pedir explicitamente que a ferramenta obtenha somente o texto remoto e o analise — nunca executa o payload.</div>
+    <div class="notice">O motor analisa Lua/Luau no navegador via Rust/WebAssembly, sem IA externa e sem executar o script. Para fonte, aplica transformações estáticas comprováveis; bytecode Luau padrão v3–v9 pode ser descompilado. Você também pode importar código por uma URL HTTP/HTTPS pública que retorne o texto do arquivo. A ferramenta analisa o conteúdo sem executar o script; endereços privados e redirecionamentos são bloqueados.</div>
     <form id="form">
       <label for="mode">Tipo de entrada</label>
       <select id="mode">
@@ -46,6 +46,12 @@
       </div>
       <div id="status" class="status" role="status" aria-live="polite"></div>
     </form>
+    <div id="loaderActions" class="row" style="margin:12px 0">
+      <input id="loaderUrl" type="url" aria-label="URL pública do código-fonte" placeholder="Cole a URL pública que retorna o código-fonte">
+      <button id="fetchPayload" type="button" class="secondary">IMPORTAR CÓDIGO POR URL</button>
+      <span id="loaderHelp" class="muted">Importa somente o texto; não executa o script.</span>
+    </div>
+
   </section>
 
   <section id="results" class="panel" hidden>
@@ -55,11 +61,6 @@
     <div id="metrics" class="metrics"></div>
     <h2>Achados e avisos</h2>
     <ul id="findings" class="findings"></ul>
-    <div id="loaderActions" class="row" style="margin:12px 0" hidden>
-      <input id="loaderUrl" type="url" aria-label="URL do loader Jnkie" placeholder="URL do loader (detectada automaticamente)">
-      <button id="fetchPayload" type="button" class="secondary">IMPORTAR E ANALISAR</button>
-      <span id="loaderHelp" class="muted">Obtém somente o texto, sem executar o conteúdo.</span>
-    </div>
     <section id="compatPanel" class="notice" hidden style="margin-top:16px">
       <h2>Mapa de APIs de ambiente</h2>
       <p id="compatSummary">Inventário estático de APIs exigidas pelo código, sem executar o script.</p>
@@ -77,7 +78,7 @@
     </div>
   </section>
 
-  <p class="foot">Precisão primeiro: o motor descompila bytecode Luau padrão v3–v9 e aplica passes estáticos conservadores sobre fonte. A busca remota é opcional, limitada a URLs públicas Jnkie compatíveis e retorna texto para análise; nenhum script é executado. Wrappers/VMs proprietárias podem permanecer sem reconstrução. <a href="https://github.com/gomesotavio127/script/tree/main/deobfuscator-engine">Código-fonte</a>.</p>
+  <p class="foot">Precisão primeiro: o motor descompila bytecode Luau padrão v3–v9 e aplica passes estáticos conservadores sobre fonte. A importação remota aceita URLs HTTP/HTTPS públicas que retornem texto, bloqueia endereços privados e redirecionamentos, e nunca executa o script. Wrappers/VMs proprietárias podem permanecer sem reconstrução. <a href="https://github.com/gomesotavio127/script/tree/main/deobfuscator-engine">Código-fonte</a>.</p>
 </main>
 <script src="./app.js"></script>
 </body>
