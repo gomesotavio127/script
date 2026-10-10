@@ -29,7 +29,7 @@
 
   <section class="panel">
     <h2>Entrada</h2>
-    <div class="notice">O motor roda localmente no navegador via Rust/WebAssembly, sem IA externa e sem executar o script. Para fonte Lua/Luau, aplica transformações estáticas comprováveis: expressões constantes, chamadas puras de string, constantes locais simples e ramos de controle cujo resultado é conhecido. Bytecode Luau padrão v3–v9 passa pelo descompilador; loaders, VMs próprias e formatos não reconhecidos geram avisos em vez de código inventado.</div>
+    <div class="notice">O motor analisa Lua/Luau no navegador via Rust/WebAssembly, sem IA externa e sem executar o script. Para fonte, aplica transformações estáticas comprováveis; bytecode Luau padrão v3–v9 pode ser descompilado. Quando detectar um loader público Jnkie compatível, você poderá pedir explicitamente que a ferramenta obtenha somente o texto remoto e o analise — nunca executa o payload.</div>
     <form id="form">
       <label for="mode">Tipo de entrada</label>
       <select id="mode">
@@ -55,6 +55,10 @@
     <div id="metrics" class="metrics"></div>
     <h2>Achados e avisos</h2>
     <ul id="findings" class="findings"></ul>
+    <div id="loaderActions" class="row" style="margin:12px 0" hidden>
+      <button id="fetchPayload" type="button" class="secondary">OBTER TEXTO DO LOADER</button>
+      <span id="loaderHelp" class="muted">Obtém o texto remoto, sem executar o conteúdo.</span>
+    </div>
     <p id="noSourceOutput" class="notice" hidden>Este arquivo não foi descompilado. Confira o diagnóstico e a versão de bytecode suportada; formatos desconhecidos não produzem código fictício.</p>
     <label id="outputLabel" for="output">Código recuperado (pode ser parcial)</label>
     <textarea id="output" spellcheck="false" hidden readonly></textarea>
@@ -64,7 +68,7 @@
     </div>
   </section>
 
-  <p class="foot">Precisão primeiro: o motor descompila bytecode Luau padrão v3–v9 e aplica passes estáticos conservadores sobre fonte, incluindo folding de constantes e eliminação de ramos comprovadamente inalcançáveis. Não executa o script nem busca payload remoto; wrappers/VMs proprietárias podem permanecer sem reconstrução. <a href="https://github.com/gomesotavio127/script/tree/deobfuscator-engine-v1/deobfuscator-engine">Código-fonte</a>.</p>
+  <p class="foot">Precisão primeiro: o motor descompila bytecode Luau padrão v3–v9 e aplica passes estáticos conservadores sobre fonte. A busca remota é opcional, limitada a URLs públicas Jnkie compatíveis e retorna texto para análise; nenhum script é executado. Wrappers/VMs proprietárias podem permanecer sem reconstrução. <a href="https://github.com/gomesotavio127/script/tree/main/deobfuscator-engine">Código-fonte</a>.</p>
 </main>
 <script src="./app.js"></script>
 </body>
