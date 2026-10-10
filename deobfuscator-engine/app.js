@@ -291,13 +291,11 @@ function renderResult(result) {
   const hasOutput = typeof result.output === "string" && result.output.length > 0;
   const transformations = Number(result.metrics?.transformations_total || 0);
   output.value = hasOutput ? result.output : "";
-  $("outputLabel").textContent = (isLoader || isProtectedVm)
+  $("outputLabel").textContent = (isLoader || isProtectedVm || !hasOutput)
     ? "Nenhum código recuperado"
     : result.mode === "bytecode"
       ? "Código Luau recuperado por descompilação"
-      : transformations > 0
-        ? "Código recuperado (transformações estáticas; pode ser parcial)"
-        : "Código de entrada normalizado (nenhuma desofuscação confirmada)";
+      : "Código recuperado (transformações estáticas; pode ser parcial)";
   output.hidden = !hasOutput;
   copyButton.disabled = !hasOutput;
   downloadButton.disabled = !hasOutput;
