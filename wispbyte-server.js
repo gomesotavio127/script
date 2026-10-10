@@ -3,13 +3,16 @@
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
+const dns = require("node:dns").promises;
+const net = require("node:net");
+const http = require("node:http");
+const https = require("node:https");
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "deobfuscator-engine", "public");
-const PORT = Number(process.env.PORT || 3000);
+const PORT = Number(process.env.SERVER_PORT || process.env.PORT || 11675);
 const MAX_LOADER_BYTES = 4 * 1024 * 1024;
 const MAX_JSON_BYTES = 16 * 1024;
-const LOADER_URL = /^https:\/\/api\.jnkie\.com\/api\/v1\/luascripts\/public\/[a-z0-9_-]{12,128}\/download$/i;
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -57,105 +60,118 @@ function readJsonBody(req) {
   });
 }
 
-async function getLoaderText(rawUrl) {
-  let target;
-  try {
-    target = new URL(rawUrl);
-  } catch {
-    throw Object.assign(new Error("URL inválida."), { statusCode: 400 });
-  }
-
-  if (
-    typeof rawUrl !== "string" ||
-    target.protocol !== "https:" ||
-    target.hostname.toLowerCase() !== "api.jnkie.com" ||
-    target.port ||
-    target.username ||
-    target.password ||
-    target.search ||
-    target.hash ||
-    !LOADER_URL.test(target.href)
-  ) {
-    throw Object.assign(new Error("Só são permitidas URLs públicas Jnkie no formato compatível."), { statusCode: 400 });
-  }
-
-  let remote;
-  try {
-    remote = await fetch(target.href, {
-      method: "GET",
-      redirect: "manual",
-      headers: { Accept: "text/plain, application/octet-stream" },
-      signal: AbortSignal.timeout(12000)
-    });
-  } catch (error) {
-    const message = error && error.name === "TimeoutError"
-      ? "A fonte remota demorou demais para responder."
-      : "Não foi possível obter o texto da fonte remota.";
-    throw Object.assign(new Error(message), { statusCode: 502 });
-  }
-
-  if (remote.status >= 300 && remote.status < 400) {
-    await remote.body?.cancel();
-    throw Object.assign(new Error("A fonte redirecionou para outro endereço; o redirecionamento foi bloqueado por segurança."), { statusCode: 502 });
-  }
-  if (!remote.ok) {
-    await remote.body?.cancel();
-    throw Object.assign(new Error("A fonte remota respondeu HTTP " + remote.status + "."), { statusCode: 502 });
-  }
-
-  const declaredSize = Number(remote.headers.get("content-length") || 0);
-  if (declaredSize > MAX_LOADER_BYTES) {
-    await remote.body?.cancel();
-    throw Object.assign(new Error("O payload ultrapassa o limite de 4 MiB desta importação."), { statusCode: 413 });
-  }
-
-  const contentType = (remote.headers.get("content-type") || "").toLowerCase();
-  if (contentType.includes("text/html")) {
-    await remote.body?.cancel();
-    throw Object.assign(new Error("A fonte respondeu com HTML, não com código-fonte."), { statusCode: 502 });
-  }
-
-  const reader = remote.body && remote.body.getReader();
-  if (!reader) {
-    throw Object.assign(new Error("A fonte remota não retornou um corpo legível."), { statusCode: 502 });
-  }
-
-  const chunks = [];
-  let total = 0;
-  try {
-    while (true) {
-      const part = await reader.read();
-      if (part.done) break;
-      total += part.value.byteLength;
-      if (total > MAX_LOADER_BYTES) {
-        await reader.cancel();
-        throw Object.assign(new Error("O payload ultrapassa o limite de 4 MiB desta importação."), { statusCode: 413 });
-      }
-      chunks.push(Buffer.from(part.value));
-    }
-  } catch (error) {
-    if (error && error.statusCode) throw error;
-    throw Object.assign(new Error("Falha ao ler a resposta remota."), { statusCode: 502 });
-  }
-
-  if (total === 0) {
-    throw Object.assign(new Error("A fonte remota retornou um arquivo vazio."), { statusCode: 502 });
-  }
-
-  let source;
-  try {
-    source = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks, total));
-  } catch {
-    throw Object.assign(new Error("A resposta não é texto UTF-8 reconhecível."), { statusCode: 415 });
-  }
-
-  const prefix = source.trimStart().slice(0, 512).toLowerCase();
-  if (!source.trim() || source.includes("\0") || prefix.startsWith("<!doctype html") || /<html[\s>]/i.test(prefix)) {
-    throw Object.assign(new Error("A fonte devolveu HTML, conteúdo vazio ou texto inválido em vez de código Lua."), { statusCode: 502 });
-  }
-  return Buffer.from(source, "utf8");
+function isPublicIPv4(address) {
+  if (net.isIP(address) !== 4) return false;
+  const [a, b, c, d] = address.split(".").map(Number);
+  if (![a, b, c, d].every((part) => Number.isInteger(part) && part >= 0 && part <= 255)) return false;
+  if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
+  if (a === 100 && b >= 64 && b <= 127) return false;
+  if (a === 169 && b === 254) return false;
+  if (a === 172 && b >= 16 && b <= 31) return false;
+  if (a === 192 && b === 168) return false;
+  if (a === 192 && b === 0 && (c === 0 || c === 2)) return false;
+  if (a === 192 && b === 88 && c === 99) return false;
+  if (a === 198 && (b === 18 || b === 19 || (b === 51 && c === 100))) return false;
+  if (a === 203 && b === 0 && c === 113) return false;
+  if (a === 255 && b === 255 && c === 255 && d === 255) return false;
+  return true;
 }
 
+async function resolvePublicIPv4(hostname) {
+  const normalized = hostname.replace(/^\[|\]$/g, "");
+  const ipType = net.isIP(normalized);
+  if (ipType === 4) {
+    if (!isPublicIPv4(normalized)) throw Object.assign(new Error("Endereços IP privados ou reservados não podem ser importados."), { statusCode: 403 });
+    return normalized;
+  }
+  if (ipType === 6) throw Object.assign(new Error("URLs com IPv6 literal não são aceitas; use o domínio público correspondente."), { statusCode: 400 });
+  let records;
+  try { records = await dns.lookup(normalized, { all: true, verbatim: true, family: 4 }); }
+  catch { throw Object.assign(new Error("Não foi possível resolver o domínio para um endereço IPv4 público."), { statusCode: 400 }); }
+  if (!records.length || records.some((record) => !isPublicIPv4(record.address))) {
+    throw Object.assign(new Error("O domínio não resolve exclusivamente para endereços IPv4 públicos."), { statusCode: 403 });
+  }
+  return records[0].address;
+}
+
+function requestPublicText(target, pinnedAddress) {
+  return new Promise((resolve, reject) => {
+    const transport = target.protocol === "https:" ? https : http;
+    const hostname = target.hostname.replace(/^\[|\]$/g, "");
+    const options = {
+      protocol: target.protocol, hostname,
+      port: target.port ? Number(target.port) : undefined,
+      path: target.pathname + target.search, method: "GET",
+      headers: { Accept: "text/plain, application/javascript, application/x-lua, application/octet-stream;q=0.9, */*;q=0.1", "Accept-Encoding": "identity", "User-Agent": "DeobfuscatorLab/1.0" },
+      lookup: (_name, lookupOptions, callback) => {
+        if (lookupOptions && lookupOptions.all) callback(null, [{ address: pinnedAddress, family: 4 }]);
+        else callback(null, pinnedAddress, 4);
+      }
+    };
+    if (target.protocol === "https:" && net.isIP(hostname) === 0) options.servername = hostname;
+    const request = transport.request(options, (response) => {
+      const status = response.statusCode || 0;
+      if (status >= 300 && status < 400) {
+        response.resume();
+        reject(Object.assign(new Error("Redirecionamentos foram bloqueados por segurança. Use a URL final do arquivo."), { statusCode: 502 }));
+        return;
+      }
+      if (status < 200 || status >= 300) {
+        response.resume();
+        reject(Object.assign(new Error("A fonte remota respondeu HTTP " + status + "."), { statusCode: 502 }));
+        return;
+      }
+      const contentType = String(response.headers["content-type"] || "").toLowerCase();
+      if (contentType.includes("text/html") || contentType.includes("application/xhtml+xml")) {
+        response.resume();
+        reject(Object.assign(new Error("A URL retornou uma página HTML, não o conteúdo textual do script. Use o link direto/raw do arquivo."), { statusCode: 415 }));
+        return;
+      }
+      const declaredSize = Number(response.headers["content-length"] || 0);
+      if (declaredSize > MAX_LOADER_BYTES) {
+        response.resume();
+        reject(Object.assign(new Error("O arquivo ultrapassa o limite de 4 MiB da importação por URL."), { statusCode: 413 }));
+        return;
+      }
+      const chunks = []; let total = 0;
+      response.on("data", (chunk) => {
+        total += chunk.length;
+        if (total > MAX_LOADER_BYTES) {
+          response.destroy(); request.destroy();
+          reject(Object.assign(new Error("O arquivo ultrapassa o limite de 4 MiB da importação por URL."), { statusCode: 413 }));
+          return;
+        }
+        chunks.push(Buffer.from(chunk));
+      });
+      response.on("error", (error) => reject(error));
+      response.on("end", () => {
+        if (total === 0) return reject(Object.assign(new Error("A URL retornou um arquivo vazio."), { statusCode: 502 }));
+        let source;
+        try { source = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks, total)); }
+        catch { return reject(Object.assign(new Error("O arquivo não contém texto UTF-8 reconhecível."), { statusCode: 415 })); }
+        const prefix = source.trimStart().slice(0, 512).toLowerCase();
+        if (!source.trim() || source.includes("\0") || prefix.startsWith("<!doctype html") || /<html[\s>]/i.test(prefix)) {
+          return reject(Object.assign(new Error("A URL retornou HTML, conteúdo vazio ou texto inválido em vez do código-fonte."), { statusCode: 415 }));
+        }
+        resolve(Buffer.from(source, "utf8"));
+      });
+    });
+    request.setTimeout(12000, () => request.destroy(Object.assign(new Error("A fonte remota demorou demais para responder."), { statusCode: 504 })));
+    request.on("error", (error) => reject(error.statusCode ? error : Object.assign(new Error("Não foi possível obter o texto da URL pública."), { statusCode: 502 })));
+    request.end();
+  });
+}
+
+async function getRemoteSourceText(rawUrl) {
+  if (typeof rawUrl !== "string" || rawUrl.length > 4096) throw Object.assign(new Error("Informe uma URL HTTP ou HTTPS válida."), { statusCode: 400 });
+  let target;
+  try { target = new URL(rawUrl); } catch { throw Object.assign(new Error("URL inválida."), { statusCode: 400 }); }
+  if ((target.protocol !== "https:" && target.protocol !== "http:") || target.username || target.password || target.hash) {
+    throw Object.assign(new Error("Use uma URL HTTP ou HTTPS pública, sem credenciais nem fragmento."), { statusCode: 400 });
+  }
+  const pinnedAddress = await resolvePublicIPv4(target.hostname);
+  return requestPublicText(target, pinnedAddress);
+}
 async function handle(req, res) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "no-referrer");
@@ -175,11 +191,11 @@ async function handle(req, res) {
     return sendJson(res, 200, { ok: true, service: "deobfuscator-rust-wasm" });
   }
 
-  if (pathname === "/api/fetch-loader") {
+  if (pathname === "/api/fetch-source" || pathname === "/api/fetch-loader") {
     res.setHeader("Cache-Control", "no-store");
     if (req.method !== "POST") {
       res.setHeader("Allow", "POST");
-      return sendJson(res, 405, { ok: false, error: "Use POST para solicitar o texto do loader." });
+      return sendJson(res, 405, { ok: false, error: "Use POST para importar o texto de uma URL pública." });
     }
     let body;
     try {
@@ -192,7 +208,7 @@ async function handle(req, res) {
     }
 
     try {
-      const content = await getLoaderText(body.url);
+      const content = await getRemoteSourceText(body.url);
       res.writeHead(200, {
         "Content-Type": "text/plain; charset=utf-8",
         "Content-Length": String(content.length),
