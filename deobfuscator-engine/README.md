@@ -2,14 +2,19 @@
 
 A conservative, deterministic Lua/Luau static-analysis core compiled to WebAssembly and hosted as a Cloudflare Pages site. No external AI inference or source-code execution is used.
 
-## V1 behavior
-- Removes line and long comments while preserving line breaks.
-- Normalizes quoted strings when the supported Lua escape sequences can be decoded without ambiguity.
-- Converts long-bracket strings to escaped quoted strings while preserving Lua's initial-newline rule.
-- Preserves malformed/unknown escapes verbatim and emits warnings.
-- Checks matching parentheses, square brackets, and braces; this is not a full parser or proof of syntax validity.
-- Reports heuristic source indicators without claiming that obfuscation was proven.
-- Inspects recognizable Lua 5.1–5.4 bytecode signatures and an RSB1 marker. V1 does not disassemble instructions, recover constants/functions, or decompile Lua/Luau bytecode.
+## V1 static source passes
+- Removes line and long comments while preserving line breaks; normalizes supported quoted and long-bracket strings.
+- Tokenizes source without executing it, then folds pure numeric, boolean, comparison and string-concatenation expressions.
+- Statically folds bounded pure string calls: `string.char`, `string.reverse`, `string.sub`, `string.rep` and literal `table.concat`.
+- Propagates simple literal local constants until reassignment or a control-flow boundary.
+- Removes `if` branches only when every condition needed for the decision is statically known; removes `while false do ... end` loops.
+- Reports the number of rewrites and warns when no supported transform applied. The output is explicitly partial; this is not a complete Lua parser or a full devirtualizer.
+- Never retrieves a loader's remote payload and never executes the analyzed script.
+- Recognizes unsupported bytecode/container signatures and does not fabricate source.
+
+## Bytecode
+- The bytecode path uses the MIT-licensed `luau-core` Rust library to parse and decompile standard Roblox Luau bytecode versions 3–9.
+- Obfuscated opcode shuffles, custom virtual machines, encrypted/compressed wrappers, and other formats require format-specific decoders and remain unsupported unless their structure is independently recovered.
 
 ## Build
 Run bash build.sh from this directory. The script installs a minimal Rust toolchain if needed, runs unit tests, compiles wasm32-unknown-unknown, and outputs static assets in public/.
@@ -27,4 +32,4 @@ This is a real decoder integration, not an original decompiler implementation fr
 - Deploy with Cloudflare Pages, using this directory as root and public as output directory.
 
 ## Precision contract
-The engine never executes the analyzed script, guesses missing payloads, or labels partial output as a complete decompilation. The first release is the base for adding a proper tokenizer/parser, control-flow analysis, constant propagation, and format-specific bytecode decoders backed by fixtures and tests.
+The engine never executes the analyzed script, guesses missing payloads, or labels partial output as a complete decompilation. The source-mode passes are intentionally bounded and conservative. They are not a replacement for a full Luau parser or an opcode-level devirtualizer; additional syntax and VM formats should be added only with tests and captured fixtures.
