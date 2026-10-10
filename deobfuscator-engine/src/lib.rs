@@ -460,53 +460,90 @@ fn source_findings(source: &str) -> Vec<String> {
 
 fn inspect_bytecode(bytes: &[u8]) -> String {
     let size = bytes.len();
-    if size >= 4 && &bytes[0..4] == b"\x1bLua" {
-        let version = bytes.get(4).copied().unwrap_or(0);
-        let (name, supported_header) = match version {
-            0x51 => ("Lua 5.1", size >= 12),
-            0x52 => ("Lua 5.2", size >= 12),
-            0x53 => ("Lua 5.3", size >= 12),
-            0x54 => ("Lua 5.4", size >= 12),
-            _ => ("Lua-family bytecode with unknown version", size >= 6),
-        };
-        let format = bytes.get(5).copied().unwrap_or(255);
-        let mut warnings = Vec::new();
-        warnings.push("This v1 engine inspects the binary header only; it does not yet decompile instructions or recover function bodies.".to_string());
-        if !supported_header { warnings.push("The file is shorter than the minimum expected header.".to_string()); }
-        if format != 0 { warnings.push(format!("Non-zero chunk format byte {} is unusual; compatibility is not guaranteed.", format)); }
-        let summary = if supported_header {
-            format!("Recognized {} binary signature; header inspection only.", name)
-        } else {
-            "Recognized Lua bytecode signature, but the header appears incomplete.".to_string()
-        };
-        return format!(
-            "{{\"ok\":true,\"engine\":\"Deobfuscator Lab Rust\",\"version\":\"{}\",\"mode\":\"bytecode\",\"format\":\"{}\",\"summary\":\"{}\",\"output\":\"\",\"metrics\":{{\"bytes\":{},\"header_detected\":{},\"chunk_format\":{}}},\"findings\":{},\"warnings\":{},\"scope\":\"Header inspection only; instruction decompilation is not implemented in v1.\"}}",
-            VERSION, json_escape(name), json_escape(&summary), size, supported_header, format,
-            quote_json_array(&vec!["Lua bytecode signature: 1B 4C 75 61".to_string()]),
-            quote_json_array(&warnings)
-        );
-    }
-    if bytes.starts_with(b"RSB1") {
-        return format!(
-            "{{\"ok\":true,\"engine\":\"Deobfuscator Lab Rust\",\"version\":\"{}\",\"mode\":\"bytecode\",\"format\":\"Roblox RSB1 container candidate\",\"summary\":\"Recognized RSB1 marker; the payload layout is not parsed in this version.\",\"output\":\"\",\"metrics\":{{\"bytes\":{},\"header_detected\":true}},\"findings\":{},\"warnings\":{},\"scope\":\"Container recognition only; no Luau instruction decompilation is implemented in v1.\"}}",
-            VERSION, size,
-            quote_json_array(&vec!["RSB1 marker found.".to_string()]),
-            quote_json_array(&vec!["The marker alone does not prove that the payload is valid Luau bytecode.".to_string()])
-        );
-    }
 
-    let sample = bytes.iter().take(16).map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
-    format!(
-        "{{\"ok\":true,\"engine\":\"Deobfuscator Lab Rust\",\"version\":\"{}\",\"mode\":\"bytecode\",\"format\":\"unknown\",\"summary\":\"No supported Lua 5.1–5.4 signature was found.\",\"output\":\"\",\"metrics\":{{\"bytes\":{},\"header_detected\":false,\"first_bytes\":\"{}\"}},\"findings\":{},\"warnings\":{},\"scope\":\"Unknown binaries are not disassembled speculatively. Luau bytecode variants need an explicit format parser before reliable decompilation.\"}}",
-        VERSION, size, json_escape(&sample),
-        quote_json_array(&vec!["Header does not match the signatures implemented by this version.".to_string()]),
-        quote_json_array(&vec!["This input may be Luau bytecode, compressed data, encrypted data, or another binary format.".to_string()])
-    )
+    // The real decoder runs first. It returns source only after the upstream
+    // parser and lifter accept the complete chunk; failed inputs are never
+    // presented as successfully decompiled code.
+    match luau_core::decompile(bytes) {
+        Ok(source) => {
+            let bytecode_version = luau_core::bytecode_version(bytes)
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            let lines = source.lines().count();
+            let summary = format!(
+                "Luau bytecode decoded successfully (bytecode version {}). Review the recovered source; original comments and names may not be recoverable.",
+                bytecode_version
+            );
+            return format!(
+                "{{\"ok\":true,\"engine\":\"Deobfuscator Lab Rust + luau-core\",\"version\":\"{}\",\"mode\":\"bytecode\",\"format\":\"Luau bytecode\",\"summary\":\"{}\",\"output\":\"{}\",\"metrics\":{{\"bytes\":{},\"bytecode_version\":\"{}\",\"output_characters\":{},\"output_lines\":{}}},\"findings\":{},\"warnings\":{},\"scope\":\"Actual bytecode parsing and decompilation performed by the MIT-licensed luau-core Rust engine. This is recovered source, not a guarantee of original text identity.\"}}",
+                VERSION,
+                json_escape(&summary),
+                json_escape(&source),
+                size,
+                json_escape(&bytecode_version),
+                source.chars().count(),
+                lines,
+                quote_json_array(&vec![
+                    "Luau bytecode was parsed and lifted into source code.".to_string()
+                ]),
+                quote_json_array(&vec![
+                    "Decompilation cannot restore comments and identifiers discarded during compilation.".to_string()
+                ])
+            );
+        }
+        Err(error) => {
+            let message = format!("{:#}", error);
+            let sample = bytes.iter().take(16).map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+            let version = luau_core::bytecode_version(bytes)
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+
+            let (format_name, header_detected) = if bytes.starts_with(b"\x1bLua") {
+                ("Lua-family bytecode (not Luau)", true)
+            } else if bytes.starts_with(b"RSB1") {
+                ("Roblox RSB1 container candidate", true)
+            } else if luau_core::bytecode_version(bytes).is_some() {
+                ("Luau bytecode header detected, but decoding failed", true)
+            } else {
+                ("unknown", false)
+            };
+            let summary = if header_detected {
+                "A binary signature was detected, but the Luau decoder rejected the input; no source was fabricated."
+            } else {
+                "The file could not be decoded as a supported Luau bytecode chunk."
+            };
+            format!(
+                "{{\"ok\":true,\"engine\":\"Deobfuscator Lab Rust + luau-core\",\"version\":\"{}\",\"mode\":\"bytecode\",\"format\":\"{}\",\"summary\":\"{}\",\"output\":\"\",\"metrics\":{{\"bytes\":{},\"header_detected\":{},\"bytecode_version\":\"{}\",\"first_bytes\":\"{}\"}},\"findings\":{},\"warnings\":{},\"scope\":\"No source output is produced when decoding fails. The upstream core currently targets standard Roblox Luau bytecode versions 3–9 and rejects uncertain formats rather than guessing.\"}}",
+                VERSION,
+                json_escape(format_name),
+                json_escape(summary),
+                size,
+                header_detected,
+                json_escape(&version),
+                json_escape(&sample),
+                quote_json_array(&vec![
+                    "The decoder did not accept this input; it may be another VM, an encrypted/compressed wrapper, or an unsupported bytecode version.".to_string()
+                ]),
+                quote_json_array(&vec![
+                    format!("Decoder detail: {}", message)
+                ])
+            )
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn decode_hex(hex: &str) -> Vec<u8> {
+        let clean: String = hex.chars().filter(|c| !c.is_whitespace()).collect();
+        assert_eq!(clean.len() % 2, 0, "fixture hex must have an even length");
+        (0..clean.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&clean[i..i + 2], 16).expect("valid fixture hex"))
+            .collect()
+    }
 
     #[test]
     fn strips_comments_but_preserves_newlines() {
@@ -534,11 +571,40 @@ mod tests {
     }
 
     #[test]
-    fn identifies_lua_bytecode_header() {
-        let mut b = b"\x1bLua".to_vec();
-        b.extend_from_slice(&[0x51, 0, 1, 4, 4, 4, 8, 0]);
-        let out = inspect_bytecode(&b);
-        assert!(out.contains("Lua 5.1"));
-        assert!(out.contains("header inspection only"));
+    fn decompiles_real_luau_bytecode_fixture() {
+        // Real 200-byte compiled Luau chunk from the MIT-licensed
+        // PumbaaDev/luau-decompiler test corpus (p03_unary.luac).
+        let bytes = decode_hex(include_str!("../tests/fixtures/p03_unary.luac.hex"));
+        assert_eq!(bytes.len(), 200);
+        assert_eq!(luau_core::bytecode_version(&bytes), Some(6));
+        let source = luau_core::decompile(&bytes).expect("fixture should decompile");
+        assert!(!source.trim().is_empty());
+        assert!(source.contains("function") || source.contains("return") || source.contains("local"));
+    }
+
+    #[test]
+    fn bytecode_response_includes_recovered_source() {
+        let bytes = decode_hex(include_str!("../tests/fixtures/p03_unary.luac.hex"));
+        let response = inspect_bytecode(&bytes);
+        assert!(response.contains("\"ok\":true"));
+        assert!(response.contains("\"mode\":\"bytecode\""));
+        assert!(response.contains("\"output\":\""));
+        assert!(!response.contains("header inspection only"));
+    }
+
+    #[test]
+    fn malformed_bytecode_is_rejected_without_fake_output() {
+        let response = inspect_bytecode(&[0xff; 32]);
+        assert!(response.contains("\"output\":\"\""));
+        assert!(response.contains("could not be decoded") || response.contains("rejected"));
+    }
+
+    #[test]
+    fn identifies_lua_bytecode_header_but_does_not_claim_decompilation() {
+        let mut bytes = b"\x1bLua".to_vec();
+        bytes.extend_from_slice(&[0x51, 0, 1, 4, 4, 4, 8, 0]);
+        let response = inspect_bytecode(&bytes);
+        assert!(response.contains("Lua-family bytecode"));
+        assert!(response.contains("\"output\":\"\""));
     }
 }
