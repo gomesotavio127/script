@@ -21,6 +21,7 @@ let fileData = null;
 let fileName = "";
 let worker = null;
 let initialized = false;
+let engineReady = false;
 let lastResult = null;
 let currentLoaderUrl = "";
 
@@ -69,14 +70,17 @@ function getWorker() {
     worker.onmessage = ({ data }) => {
       if (!initialized) {
         initialized = true;
-        runButton.disabled = false;
-        runButton.textContent = "ANALISAR COM MOTOR RUST";
-        if (data?.ok) setStatus("Motor Rust carregado e pronto.", "success");
-        else setStatus(data?.error || "Motor inicializado com aviso.", "warning");
+        engineReady = Boolean(data?.ok);
+        runButton.disabled = !engineReady;
+        runButton.textContent = engineReady ? "ANALISAR COM MOTOR RUST" : "MOTOR INDISPONÍVEL";
+        fetchPayloadButton.disabled = !engineReady || !extractCompatibleLoaderUrl(loaderUrlInput.value);
+        if (engineReady) setStatus("Motor Rust carregado e pronto.", "success");
+        else setStatus(data?.error || "O motor Rust não inicializou; recarregue a página.", "error");
         return;
       }
-      runButton.disabled = false;
-      runButton.textContent = "ANALISAR COM MOTOR RUST";
+      runButton.disabled = !engineReady;
+      runButton.textContent = engineReady ? "ANALISAR COM MOTOR RUST" : "MOTOR INDISPONÍVEL";
+      fetchPayloadButton.disabled = !engineReady || !extractCompatibleLoaderUrl(loaderUrlInput.value);
       if (!data?.ok) {
         setStatus(data?.error || "Falha ao executar o motor.", "error");
         return;
@@ -85,8 +89,10 @@ function getWorker() {
     };
     worker.onerror = (event) => {
       initialized = true;
-      runButton.disabled = false;
-      runButton.textContent = "ANALISAR COM MOTOR RUST";
+      engineReady = false;
+      runButton.disabled = true;
+      runButton.textContent = "MOTOR INDISPONÍVEL";
+      fetchPayloadButton.disabled = true;
       setStatus(event.message || "Falha no worker WebAssembly.", "error");
     };
   }
@@ -212,7 +218,7 @@ function renderResult(result) {
     (isLoader ? extractCompatibleLoaderUrl(input.value) : "");
   loaderUrlInput.value = currentLoaderUrl;
   loaderActions.hidden = false;
-  fetchPayloadButton.disabled = !currentLoaderUrl;
+  fetchPayloadButton.disabled = !currentLoaderUrl || !engineReady;
   loaderHelp.textContent = currentLoaderUrl
     ? "URL HTTP/HTTPS reconhecida. A ferramenta obterá somente o texto, sem executar o conteúdo."
     : "Cole uma URL pública HTTP/HTTPS que retorne diretamente o código-fonte.";
@@ -287,23 +293,28 @@ $("form").addEventListener("submit", (event) => {
 
 loaderUrlInput.addEventListener("input", () => {
   currentLoaderUrl = extractCompatibleLoaderUrl(loaderUrlInput.value);
-  fetchPayloadButton.disabled = !currentLoaderUrl;
+  fetchPayloadButton.disabled = !currentLoaderUrl || !engineReady;
   loaderHelp.textContent = currentLoaderUrl
-    ? "URL compatível validada. A ferramenta obterá somente o texto, sem executar o conteúdo."
-    : "Cole uma URL pública Jnkie compatível com o formato aceito.";
+    ? (engineReady ? "URL reconhecida. A ferramenta obterá somente o texto, sem executar o conteúdo."
+      : "URL reconhecida; aguardando o motor Rust terminar de carregar.")
+    : "Cole uma URL pública HTTP/HTTPS que retorne diretamente o texto do script.";
 });
 
 fetchPayloadButton.addEventListener("click", async () => {
   const url = extractCompatibleLoaderUrl(loaderUrlInput.value) || currentLoaderUrl;
+  if (!engineReady) {
+    setStatus("O motor Rust ainda não está pronto. Recarregue a página se o aviso persistir.", "error");
+    return;
+  }
   if (!url) {
-    setStatus("Cole uma URL pública Jnkie compatível no campo.", "error");
+    setStatus("Cole uma URL pública HTTP/HTTPS válida no campo.", "error");
     return;
   }
 
   fetchPayloadButton.disabled = true;
   setStatus("Obtendo somente o texto do payload remoto — o script não será executado…", "warning");
   try {
-    const response = await fetch("./api/fetch-loader", {
+    const response = await fetch("/api/fetch-loader", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Accept": "text/plain, application/json" },
       body: JSON.stringify({ url })
@@ -334,7 +345,7 @@ fetchPayloadButton.addEventListener("click", async () => {
     currentLoaderUrl = "";
     runAnalysis(bytes, 0);
   } catch (error) {
-    fetchPayloadButton.disabled = false;
+    fetchPayloadButton.disabled = !engineReady || !extractCompatibleLoaderUrl(loaderUrlInput.value);
     setStatus((error?.message || "Falha ao obter o payload.") + " Você também pode baixar o arquivo manualmente e selecioná-lo acima.", "error");
   }
 });
