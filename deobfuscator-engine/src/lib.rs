@@ -26,7 +26,8 @@ pub extern "C" fn engine_run(ptr: *const u8, len: usize, mode: u32) -> *mut u8 {
         return output_ptr(error_json("Input is empty or exceeds the 32 MiB engine limit."));
     }
     let bytes = unsafe { slice::from_raw_parts(ptr, len) };
-    let response = if mode == 1 {
+    let is_bytecode_signature = bytes.starts_with(b"\\x1bLua") || bytes.starts_with(b"\\x1bLuau");
+    let response = if mode == 1 || is_bytecode_signature {
         inspect_bytecode(bytes)
     } else {
         match str::from_utf8(bytes) {
@@ -1515,4 +1516,47 @@ mod tests {
         assert!(response.contains("Lua-family bytecode"));
         assert!(response.contains("\"output\":\"\""));
     }
+
+    #[test]
+    fn folds_constant_arithmetic_and_removes_dead_if_branch() {
+        let response = analyze_source(
+            "local value = (2 + 3) * 4\nif 1 + 1 == 2 then\n return value\nelse\n return 99\nend\n"
+        );
+        assert!(response.contains("return 20"), "expected propagated constant in output: {}", response);
+        assert!(!response.contains("return 99"), "dead branch must be removed: {}", response);
+        assert!(response.contains("\"constant_branches_removed\":1"), "expected branch metric: {}", response);
+        assert!(response.contains("\"constant_expressions_folded\":"), "expected fold metrics");
+    }
+
+    #[test]
+    fn folds_static_string_calls_without_execution() {
+        let response = analyze_source(
+            "local s = string.char(72, 105); return string.reverse(s)"
+        );
+        assert!(response.contains("iH"), "static string calls should be recovered: {}", response);
+        assert!(response.contains("\"static_calls_folded\":"), "expected static call metric");
+    }
+
+    #[test]
+    fn removes_provably_false_while_loop() {
+        let response = analyze_source("while false do\n return 12345\nend\nreturn 7");
+        assert!(!response.contains("return 12345"), "dead loop body remains: {}", response);
+        assert!(response.contains("return 7"), "live source should be preserved: {}", response);
+    }
+
+    #[test]
+    fn does_not_claim_success_when_no_rewrite_is_supported() {
+        let response = analyze_source("return variable_name");
+        assert!(response.contains("no supported static transformation was applicable"));
+        assert!(response.contains("\"transformations_total\":0"));
+    }
+
+    #[test]
+    fn keeps_table_keys_and_field_names_during_constant_propagation() {
+        let (out, _) = propagate_local_constants("local x = 7\nlocal t = { x = 1 }\nreturn t.x + x");
+        assert!(out.contains("{ x = 1 }"), "table key was changed: {}", out);
+        assert!(out.contains("t.x"), "field name was changed: {}", out);
+        assert!(out.contains("t.x + 7"), "local read was not propagated: {}", out);
+    }
+
 }
