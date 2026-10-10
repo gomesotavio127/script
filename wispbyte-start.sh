@@ -8,29 +8,34 @@ ASSET_BASE="${DEOBFUSCATOR_ASSETS_URL:-https://deobfuscator-rust-engine.vercel.a
 
 mkdir -p "$PUBLIC_DIR"
 
-# Prefer precompiled assets to avoid compiling Rust on a small free container.
-if [[ ! -s "$PUBLIC_DIR/engine.wasm" || ! -s "$PUBLIC_DIR/index.html" || ! -s "$PUBLIC_DIR/app.js" || ! -s "$PUBLIC_DIR/engine-worker.js" ]]; then
-  if command -v curl >/dev/null 2>&1; then
-    TMP_DIR="$(mktemp -d)"
-    echo "[WispByte] Tentando obter os assets pré-compilados..."
-    if curl -fLsS --connect-timeout 10 --max-time 90 "$ASSET_BASE/index.html" -o "$TMP_DIR/index.html" &&
-       curl -fLsS --connect-timeout 10 --max-time 90 "$ASSET_BASE/app.js" -o "$TMP_DIR/app.js" &&
-       curl -fLsS --connect-timeout 10 --max-time 90 "$ASSET_BASE/engine-worker.js" -o "$TMP_DIR/engine-worker.js" &&
-       curl -fLsS --connect-timeout 10 --max-time 120 "$ASSET_BASE/engine.wasm" -o "$TMP_DIR/engine.wasm" &&
-       [[ -s "$TMP_DIR/index.html" && -s "$TMP_DIR/app.js" && -s "$TMP_DIR/engine-worker.js" && -s "$TMP_DIR/engine.wasm" ]]; then
-      cp "$TMP_DIR/index.html" "$TMP_DIR/app.js" "$TMP_DIR/engine-worker.js" "$TMP_DIR/engine.wasm" "$PUBLIC_DIR/"
-      echo "[WispByte] Assets pré-compilados obtidos com sucesso."
-    else
-      echo "[WispByte] Downloads indisponíveis; o script tentará compilar Rust localmente."
-    fi
-    rm -rf "$TMP_DIR"
+# Always serve the UI files from this branch so interface fixes reach WispByte.
+for asset in index.html app.js engine-worker.js; do
+  if [[ ! -s "$ENGINE_DIR/$asset" ]]; then
+    echo "[WispByte] Arquivo de interface ausente: $ENGINE_DIR/$asset" >&2
+    exit 1
   fi
+  cp "$ENGINE_DIR/$asset" "$PUBLIC_DIR/$asset"
+done
+
+# Reuse the published WASM engine when possible. Only download the binary;
+# never overwrite the branch's current HTML or JavaScript with older Vercel files.
+if [[ ! -s "$PUBLIC_DIR/engine.wasm" ]] && command -v curl >/dev/null 2>&1; then
+  TMP_DIR="$(mktemp -d)"
+  echo "[WispByte] Tentando obter o WebAssembly pré-compilado..."
+  if curl -fLsS --connect-timeout 10 --max-time 120 "$ASSET_BASE/engine.wasm" -o "$TMP_DIR/engine.wasm" &&
+     [[ -s "$TMP_DIR/engine.wasm" ]]; then
+    cp "$TMP_DIR/engine.wasm" "$PUBLIC_DIR/engine.wasm"
+    echo "[WispByte] WebAssembly pré-compilado obtido com sucesso."
+  else
+    echo "[WispByte] WASM pré-compilado indisponível; será tentada a compilação local."
+  fi
+  rm -rf "$TMP_DIR"
 fi
 
-if [[ ! -s "$PUBLIC_DIR/engine.wasm" || ! -s "$PUBLIC_DIR/index.html" || ! -s "$PUBLIC_DIR/app.js" || ! -s "$PUBLIC_DIR/engine-worker.js" ]]; then
+if [[ ! -s "$PUBLIC_DIR/engine.wasm" ]]; then
   echo "[WispByte] Build local Rust/WebAssembly iniciado."
   if ! command -v curl >/dev/null 2>&1; then
-    echo "[WispByte] curl não está disponível e não há assets pré-compilados." >&2
+    echo "[WispByte] curl não está disponível e não há WASM pré-compilado." >&2
     exit 1
   fi
 
@@ -57,7 +62,6 @@ if [[ ! -s "$PUBLIC_DIR/engine.wasm" || ! -s "$PUBLIC_DIR/index.html" || ! -s "$
     cargo build --manifest-path Cargo.toml --target wasm32-unknown-unknown --release --jobs 1
   )
 
-  cp "$ENGINE_DIR/index.html" "$ENGINE_DIR/app.js" "$ENGINE_DIR/engine-worker.js" "$PUBLIC_DIR/"
   cp "$ENGINE_DIR/target/wasm32-unknown-unknown/release/deobfuscator_engine.wasm" "$PUBLIC_DIR/engine.wasm"
   echo "[WispByte] Build local concluído: $(wc -c < "$PUBLIC_DIR/engine.wasm") bytes de WASM."
 fi
