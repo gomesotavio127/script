@@ -63,6 +63,15 @@ module.exports = async function fetchLoader(req, res) {
       return res.status(413).json({ ok: false, error: "O payload ultrapassa o limite de 4 MiB desta importação." });
     }
 
+    const contentType = (remote.headers.get("content-type") || "").toLowerCase();
+    if (contentType.includes("text/html")) {
+      await remote.body?.cancel();
+      return res.status(502).json({
+        ok: false,
+        error: "A fonte respondeu com uma página HTML, não com código-fonte. O conteúdo não foi enviado ao analisador."
+      });
+    }
+
     const bytes = new Uint8Array(await remote.arrayBuffer());
     if (bytes.byteLength === 0) {
       return res.status(502).json({ ok: false, error: "A fonte remota retornou um arquivo vazio." });
@@ -76,6 +85,10 @@ module.exports = async function fetchLoader(req, res) {
       source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     } catch {
       return res.status(415).json({ ok: false, error: "A resposta não é texto UTF-8 reconhecível." });
+    }
+    const prefix = source.trimStart().slice(0, 512).toLowerCase();
+    if (prefix.startsWith("<!doctype html") || /<html[\s>]/i.test(prefix)) {
+      return res.status(502).json({ ok: false, error: "A fonte devolveu uma página HTML/bloqueio em vez do payload Lua." });
     }
     if (!source.trim() || source.includes("\0")) {
       return res.status(415).json({ ok: false, error: "A resposta não parece ser código-fonte textual." });
