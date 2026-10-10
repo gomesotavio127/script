@@ -6,6 +6,8 @@ description = "Conservative static analysis and source normalization for Lua/Lua
 
 [dependencies]
 luau-core = { git = "https://github.com/PumbaaDev/luau-decompiler", rev = "ee07098c31e11601a9ca434bc12932a4ded65f7b" }
+# Modern Luau bytecode fallback: supports serialization v4–v14 and Roblox opcode encoding.
+luau-lifter = { git = "https://github.com/Kiet1308/Tovek", tag = "v2.5.1", package = "luau-lifter" }
 
 [lib]
 crate-type = ["cdylib", "rlib"]

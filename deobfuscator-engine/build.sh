@@ -22,9 +22,9 @@ if ! command -v rustup >/dev/null 2>&1; then
   exit 1
 fi
 
-rustup target add wasm32-unknown-unknown
-cargo test --manifest-path Cargo.toml
-cargo build --manifest-path Cargo.toml --target wasm32-unknown-unknown --release
+rustup toolchain install nightly-2026-06-15 --component rust-src --target wasm32-unknown-unknown
+cargo +nightly-2026-06-15 test --manifest-path Cargo.toml
+cargo +nightly-2026-06-15 build --manifest-path Cargo.toml --target wasm32-unknown-unknown --release
 
 mkdir -p public
 cp index.html app.js engine-worker.js public/
