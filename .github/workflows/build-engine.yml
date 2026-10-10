@@ -3,6 +3,7 @@ name: Build Rust Deobfuscator Engine
 on:
   push:
     branches:
+      - main
       - deobfuscator-engine-v1
   workflow_dispatch:
 
