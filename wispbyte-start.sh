@@ -67,7 +67,7 @@ if [[ ! -s "$PUBLIC_DIR/engine.wasm" ]]; then
 fi
 
 # Fail early with a clear message if shell content was pasted into the JS entrypoint.
-if head -n 20 "$ROOT/wispbyte-server.js" | grep -Eq '^#!.*(bash|sh)([[:space:]]|$)|^set -euo pipefail; then
+if head -n 20 "$ROOT/wispbyte-server.js" | grep -Eq '^#!.*(bash|sh)|^set -euo pipefail'; then
   echo "[WispByte] ERRO: wispbyte-server.js contém shell; restaure o arquivo JavaScript correto." >&2
   exit 1
 fi
