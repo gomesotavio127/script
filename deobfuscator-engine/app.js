@@ -69,7 +69,7 @@ function prettyBytes(n) {
 
 function getWorker() {
   if (!worker) {
-    worker = new Worker("./engine-worker.js", { type: "module" });
+    worker = new Worker("./engine-worker.js?v=20261010-2", { type: "module" });
     worker.onmessage = ({ data }) => {
       if (!initialized) {
         initialized = true;
@@ -290,6 +290,14 @@ function renderResult(result) {
     : "Cole uma URL pública HTTP/HTTPS que retorne diretamente o código-fonte.";
   const hasOutput = typeof result.output === "string" && result.output.length > 0;
   const transformations = Number(result.metrics?.transformations_total || 0);
+  const reportedOutputBytes = Number(result.metrics?.output_bytes ?? 0);
+  // A matching engine never reports recovered bytes/transformations while returning an empty output.
+  // This points to mismatched or stale app.js/engine.wasm assets, not an ordinary unsupported format.
+  const outputMismatch = !hasOutput && (
+    (Number.isFinite(transformations) && transformations > 0) ||
+    (Number.isFinite(reportedOutputBytes) && reportedOutputBytes > 0) ||
+    result.metrics?.source_changed === true
+  );
   output.value = hasOutput ? result.output : "";
   $("outputLabel").textContent = (isLoader || isProtectedVm || !hasOutput)
     ? "Nenhum código recuperado"
@@ -300,27 +308,33 @@ function renderResult(result) {
   copyButton.disabled = !hasOutput;
   downloadButton.disabled = !hasOutput;
   $("noSourceOutput").textContent = isLoader
-    ? "Foi detectado apenas um loader (carregador). Use “Obter texto do loader” para tentar importar a fonte compatível; o texto recebido será analisado sem executar o script."
+    ? "Foi detectado apenas um loader (carregador). Importe a fonte do payload antes de analisar; o loader não é o código final."
     : isProtectedVm
-      ? "A assinatura de uma VM Luraph foi detectada, mas este motor Rust/WebAssembly não reconstrói essa VM. Nenhum código original será inventado nem apresentado como desofuscado."
-      : Number(result.metrics?.transformations_total || 0) === 0
-        ? "Nenhuma transformação estática foi aplicada. O motor não vai repetir o código original no painel de saída fingindo que recuperou a fonte."
-        : "Este arquivo não foi descompilado. Confira o diagnóstico e a versão de bytecode suportada; formatos desconhecidos não produzem código fictício.";
+      ? "A assinatura de uma VM Luraph foi detectada, mas este motor não reconstrói essa VM. A detecção não é uma descompilação."
+      : outputMismatch
+        ? "Inconsistência entre a interface e o motor: as métricas indicam saída/transformações, mas o código retornado está vazio. Atualize os arquivos do site (Ctrl+F5); se persistir, baixe o relatório de diagnóstico."
+        : result.mode === "bytecode"
+          ? "O decodificador não conseguiu reconstruir código desse arquivo. Confira os avisos e confirme que é bytecode Luau padrão em uma versão suportada, não uma VM ou um contêiner personalizado."
+          : Number(result.metrics?.transformations_total || 0) === 0
+            ? "Nenhuma transformação estática compatível foi aplicada. O motor não repetirá a entrada como se fosse código recuperado."
+            : "A análise terminou sem produzir código. Confira os avisos e o formato reconhecido.";
   $("noSourceOutput").hidden = hasOutput;
   const statusMessage = isLoader
-    ? `Entrada identificada como loader de ${Number(result.metrics?.bytes || 0).toLocaleString("pt-BR")} bytes; nenhum payload foi analisado ainda. Use “Obter texto do loader” ou selecione a captura local.`
+    ? `Entrada identificada como loader de ${Number(result.metrics?.bytes || 0).toLocaleString("pt-BR")} bytes; nenhum payload foi analisado ainda. Importe a fonte do payload para analisá-la.`
     : isProtectedVm
-      ? "VM Luraph detectada, mas não suportada para reconstrução por este backend. A entrada não foi devolvida como resultado."
-      : result.mode === "bytecode"
-      ? (hasOutput
-        ? "Bytecode descompilado pelo motor Rust. Revise os avisos; comentários e nomes originais podem não existir mais."
-        : "O decodificador não recuperou código deste arquivo. Nenhum resultado foi inventado.")
-      : transformations > 0
-        ? `${transformations.toLocaleString("pt-BR")} transformação(ões) estática(s) aplicada(s). Trechos não compreendidos foram preservados; confira os avisos.`
-        : "Nenhuma transformação estática compatível foi aplicada. Isto não significa que o código esteja desofuscado.";
+      ? "VM Luraph detectada, mas este motor não reconstrói essa VM; nenhum código foi fabricado."
+      : outputMismatch
+        ? "Inconsistência nas métricas de saída. Atualize a página para carregar versões alinhadas da interface e do motor."
+        : result.mode === "bytecode"
+          ? (hasOutput
+            ? "Bytecode descompilado pelo motor Rust. Revise os avisos; comentários e nomes originais podem não existir mais."
+            : "O decodificador não reconheceu uma estrutura compatível para reconstruir o código. Veja os achados e avisos.")
+          : transformations > 0
+            ? `${transformations.toLocaleString("pt-BR")} transformação(ões) estática(s) aplicada(s). Trechos não compreendidos foram preservados; confira os avisos.`
+            : "Nenhuma transformação estática compatível foi aplicada. Isto não significa que o código esteja desofuscado.";
   setStatus(
     statusMessage,
-    isLoader || isProtectedVm || result.warnings?.length || (result.mode === "source" && transformations === 0) ? "warning" : "success"
+    isLoader || isProtectedVm || outputMismatch || result.mode === "bytecode" && !hasOutput || result.warnings?.length || (result.mode === "source" && transformations === 0) ? "warning" : "success"
   );
 
   // A source loader with a direct public URL is fetched automatically, then
