@@ -104,6 +104,7 @@ fn analyze_source(source: &str) -> String {
     let mut expressions_folded = 0usize;
     let mut static_calls_folded = 0usize;
     let mut locals_propagated = 0usize;
+    let mut table_indices_folded = 0usize;
     let mut branches_removed = 0usize;
     let mut analysis_rounds = 0usize;
     let mut converged = looks_like_loader;
@@ -123,6 +124,8 @@ fn analyze_source(source: &str) -> String {
             expressions_folded += expressions;
             let (next, locals) = propagate_local_constants(&next);
             locals_propagated += locals;
+            let (next, table_indices) = fold_static_table_indices(&next);
+            table_indices_folded += table_indices;
             let (next, branches) = simplify_constant_control_flow(&next);
             branches_removed += branches;
             output = next;
@@ -142,7 +145,8 @@ fn analyze_source(source: &str) -> String {
     let findings = source_findings(source);
 
     let transformations = comments_removed + strings_normalized + long_strings_normalized
-        + expressions_folded + static_calls_folded + locals_propagated + branches_removed;
+        + expressions_folded + static_calls_folded + locals_propagated
+        + table_indices_folded + branches_removed;
     let bytes = source.as_bytes().len();
     let chars = source.chars().count();
     let format_name = if looks_like_loader {
@@ -163,7 +167,7 @@ fn analyze_source(source: &str) -> String {
     };
 
     format!(
-        "{{\"ok\":true,\"engine\":\"Deobfuscator Lab Rust\",\"version\":\"{}\",\"mode\":\"source\",\"format\":\"{}\",\"summary\":\"{}\",\"output\":\"{}\",\"metrics\":{{\"bytes\":{},\"characters\":{},\"output_bytes\":{},\"comments_removed\":{},\"strings_normalized\":{},\"long_strings_normalized\":{},\"constant_expressions_folded\":{},\"static_calls_folded\":{},\"local_constants_propagated\":{},\"constant_branches_removed\":{},\"transformations_total\":{},\"analysis_rounds\":{},\"analysis_passes\":{},\"analysis_round_limit\":32,\"delimiter_check\":\"{}\"}},\"findings\":{},\"warnings\":{},\"scope\":\"Deterministic static source recovery; no script execution, network access, or model calls. Only understood constant expressions, selected pure string calls, simple local constants, and provably constant branches are rewritten. Unsupported syntax is preserved.\"}}",
+        "{{\"ok\":true,\"engine\":\"Deobfuscator Lab Rust\",\"version\":\"{}\",\"mode\":\"source\",\"format\":\"{}\",\"summary\":\"{}\",\"output\":\"{}\",\"metrics\":{{\"bytes\":{},\"characters\":{},\"output_bytes\":{},\"comments_removed\":{},\"strings_normalized\":{},\"long_strings_normalized\":{},\"constant_expressions_folded\":{},\"static_calls_folded\":{},\"local_constants_propagated\":{},\"constant_table_indices_folded\":{},\"constant_branches_removed\":{},\"transformations_total\":{},\"analysis_rounds\":{},\"analysis_passes\":{},\"analysis_round_limit\":32,\"delimiter_check\":\"{}\"}},\"findings\":{},\"warnings\":{},\"scope\":\"Deterministic static source recovery; no script execution, network access, or model calls. Only understood constant expressions, selected pure string calls, simple local constants, and provably constant branches are rewritten. Unsupported syntax is preserved.\"}}",
         VERSION,
         json_escape(format_name),
         json_escape(&summary),
@@ -177,10 +181,11 @@ fn analyze_source(source: &str) -> String {
         expressions_folded,
         static_calls_folded,
         locals_propagated,
+        table_indices_folded,
         branches_removed,
         transformations,
         analysis_rounds,
-        analysis_rounds * 4,
+        analysis_rounds * 5,
         if delimiter_ok { "balanced" } else { "mismatch" },
         quote_json_array(&findings),
         quote_json_array(&issues)
@@ -1579,6 +1584,103 @@ fn propagate_local_constants(source: &str) -> (String, usize) {
     apply_edits(source, edits)
 }
 
+fn fold_static_table_indices(source: &str) -> (String, usize) {
+    let tokens = lex_source(source);
+    let mut edits = Vec::new();
+
+    for declaration in 0..tokens.len().saturating_sub(3) {
+        if tokens[declaration].text != "local"
+            || tokens[declaration + 1].kind != TokenKind::Ident
+            || tokens[declaration + 2].text != "="
+            || tokens[declaration + 3].text != "{"
+        {
+            continue;
+        }
+
+        let name = tokens[declaration + 1].text.clone();
+        let Some(table_end) = find_matching_token(&tokens, declaration + 3, "{", "}") else {
+            continue;
+        };
+        let entries = split_arguments(&tokens, declaration + 4, table_end);
+        if entries.is_empty() || entries.len() > 4096 { continue; }
+
+        let values: Option<Vec<ConstValue>> = entries.iter()
+            .map(|(start, end)| eval_constant_range(source, &tokens, *start, *end))
+            .collect();
+        let Some(values) = values else { continue; };
+        if values.len() > 4096 { continue; }
+
+        // Refuse ambiguous shadowing: a second local with the same name can
+        // change which table an indexed read refers to.
+        let redeclared = (0..tokens.len()).any(|index| {
+            index != declaration
+                && tokens[index].text == "local"
+                && index + 1 < tokens.len()
+                && tokens[index + 1].kind == TokenKind::Ident
+                && tokens[index + 1].text == name
+        });
+        if redeclared { continue; }
+
+        let mut candidate_edits = Vec::new();
+        let mut safe = true;
+        let mut index = table_end + 1;
+        while index < tokens.len() {
+            if tokens[index].kind != TokenKind::Ident || tokens[index].text != name {
+                index += 1;
+                continue;
+            }
+            if index > 0 && matches!(tokens[index - 1].text.as_str(), "." | ":") {
+                index += 1;
+                continue;
+            }
+            // Ignore named keys in other table constructors, e.g. { values = 1 }.
+            if index > 0 && matches!(tokens[index - 1].text.as_str(), "{" | ",")
+                && index + 1 < tokens.len() && tokens[index + 1].text == "="
+            {
+                index += 1;
+                continue;
+            }
+
+            if index + 1 >= tokens.len() || tokens[index + 1].text != "[" {
+                safe = false;
+                break;
+            }
+            let Some(close_index) = find_matching_token(&tokens, index + 1, "[", "]") else {
+                safe = false;
+                break;
+            };
+
+            // Indexed writes, chained bases, and method/call uses are not
+            // substituted. This keeps the table's mutation/alias semantics intact.
+            if close_index + 1 < tokens.len()
+                && (is_assignment_operator(&tokens[close_index + 1].text)
+                    || matches!(tokens[close_index + 1].text.as_str(), "(" | "[" | "." | ":"))
+            {
+                safe = false;
+                break;
+            }
+
+            if let Some(ConstValue::Number(n)) =
+                eval_constant_range(source, &tokens, index + 2, close_index)
+            {
+                if n.is_finite() && n.fract() == 0.0 && n >= 1.0 && n <= values.len() as f64 {
+                    let slot = n as usize - 1;
+                    candidate_edits.push(Edit {
+                        start: tokens[index].start,
+                        end: tokens[close_index].end,
+                        replacement: values[slot].to_lua(),
+                    });
+                }
+            }
+            index = close_index + 1;
+        }
+
+        if safe { edits.extend(candidate_edits); }
+    }
+
+    apply_edits(source, edits)
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum BlockKind { End, Until }
 
@@ -1896,6 +1998,24 @@ mod tests {
             "return bit32.extract(bit32.replace(bit32.lrotate(1, 1), 3, 1, 2), 1, 2)"
         );
         assert!(response.contains("return 3"), "bit32 constant operations did not fold: {}", response);
+    }
+
+    #[test]
+    fn folds_reads_from_immutable_constant_tables() {
+        let response = analyze_source(
+            "local values = {\"A\", string.char(66)}\nreturn values[1] .. values[1 + 1]"
+        );
+        assert!(response.contains(r#"return \"AB\""#), "constant table reads were not folded: {}", response);
+        assert!(response.contains("\"constant_table_indices_folded\":2"), "table-index metric is missing: {}", response);
+    }
+
+    #[test]
+    fn does_not_fold_table_reads_after_an_indexed_write() {
+        let (output, count) = fold_static_table_indices(
+            "local values = {\"A\"}\nvalues[1] = \"B\"\nreturn values[1]"
+        );
+        assert_eq!(count, 0, "mutated table must not be folded: {}", output);
+        assert!(output.contains("values[1]"), "table access should be preserved: {}", output);
     }
 
     #[test]
