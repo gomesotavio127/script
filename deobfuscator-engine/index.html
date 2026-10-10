@@ -22,14 +22,14 @@
     <div>
       <div class="eyebrow">DEOBFUSCATOR LAB / ENGINE 01</div>
       <h1>Motor próprio<br>Lua &amp; Luau</h1>
-      <p class="muted">Análise estática em Rust + WebAssembly. Sem IA externa, sem API de modelo e sem executar o script analisado.</p>
+      <p class="muted">Análise estática em Rust + WebAssembly. Sem IA externa e sem executar o script analisado. Proteções de VM proprietárias são identificadas, mas não são anunciadas como desofuscadas.</p>
     </div>
     <span class="pill">RUST WASM · V1</span>
   </header>
 
   <section class="panel">
     <h2>Entrada</h2>
-    <div class="notice">O motor analisa Lua/Luau no navegador via Rust/WebAssembly, sem IA externa e sem executar o script. Cole o código, selecione um arquivo ou informe uma URL pública que retorne o texto do script. Para fonte, aplica transformações estáticas comprováveis; bytecode Luau padrão v3–v9 pode ser descompilado. VMs e proteções proprietárias podem exigir suporte adicional.</div>
+    <div class="notice">O motor analisa Lua/Luau no navegador via Rust/WebAssembly, sem IA externa e sem executar o script. Cole o código, selecione um arquivo ou informe uma URL pública que retorne o texto do script. Para fonte, aplica transformações estáticas comprováveis; bytecode Luau padrão pode ser descompilado conforme a versão. Importante: se nenhuma mudança real for aplicada, a ferramenta não repetirá a entrada como se fosse resultado. VMs Luraph são detectadas, mas ainda não são reconstruídas por este backend.</div>
     <form id="form">
       <label for="mode">Tipo de entrada</label>
       <select id="mode">
@@ -78,7 +78,7 @@
     </div>
   </section>
 
-  <p class="foot">Precisão primeiro: o motor descompila bytecode Luau padrão v3–v9 e aplica passes estáticos conservadores sobre fonte. A importação por URL pública retorna somente texto para análise; nenhum script é executado. Wrappers/VMs proprietárias podem permanecer sem reconstrução. <a href="https://github.com/gomesotavio127/script/tree/main/deobfuscator-engine">Código-fonte</a>.</p>
+  <p class="foot">Precisão primeiro: o motor tenta descompilar bytecode Luau suportado e aplica passes estáticos conservadores sobre fonte. A importação por URL pública retorna somente texto para análise; nenhum script é executado. Quando não há recuperação real, a saída fica vazia e o diagnóstico explica a limitação. <a href="https://github.com/gomesotavio127/script/tree/main/deobfuscator-engine">Código-fonte</a>.</p>
 </main>
 <script src="./app.js"></script>
 </body>
