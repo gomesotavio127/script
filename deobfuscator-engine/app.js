@@ -69,7 +69,7 @@ function prettyBytes(n) {
 
 function getWorker() {
   if (!worker) {
-    worker = new Worker("./engine-worker.js?v=20261010-2", { type: "module" });
+    worker = new Worker("./engine-worker.js?v=20261010-3", { type: "module" });
     worker.onmessage = ({ data }) => {
       if (!initialized) {
         initialized = true;
@@ -291,8 +291,9 @@ function renderResult(result) {
   const hasOutput = typeof result.output === "string" && result.output.length > 0;
   const transformations = Number(result.metrics?.transformations_total || 0);
   const reportedOutputBytes = Number(result.metrics?.output_bytes ?? 0);
-  // A matching engine never reports recovered bytes/transformations while returning an empty output.
-  // This points to mismatched or stale app.js/engine.wasm assets, not an ordinary unsupported format.
+  // Engine v0.4.1 keeps applied transformations at zero when no source is returned.
+  // A separate transformations_attempted_total is diagnostic only; it is not recovered output.
+  // Non-zero output metrics with an empty output still indicate stale/mismatched assets.
   const outputMismatch = !hasOutput && (
     (Number.isFinite(transformations) && transformations > 0) ||
     (Number.isFinite(reportedOutputBytes) && reportedOutputBytes > 0) ||

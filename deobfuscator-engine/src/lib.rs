@@ -20,13 +20,17 @@ pub unsafe extern "C" fn dealloc(ptr: *mut u8, size: usize) {
     }
 }
 
+fn has_lua_bytecode_signature(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"\x1bLua") || bytes.starts_with(b"\x1bLuau")
+}
+
 #[no_mangle]
 pub extern "C" fn engine_run(ptr: *const u8, len: usize, mode: u32) -> *mut u8 {
     if ptr.is_null() || len > 32 * 1024 * 1024 {
         return output_ptr(error_json("Input is empty or exceeds the 32 MiB engine limit."));
     }
     let bytes = unsafe { slice::from_raw_parts(ptr, len) };
-    let is_bytecode_signature = bytes.starts_with(b"\\x1bLua") || bytes.starts_with(b"\\x1bLuau");
+    let is_bytecode_signature = has_lua_bytecode_signature(bytes);
     let response = if mode == 1 || is_bytecode_signature {
         inspect_bytecode(bytes)
     } else {
@@ -2059,6 +2063,13 @@ mod tests {
         let response = inspect_bytecode(&[0xff; 32]);
         assert!(response.contains("\"output\":\"\""));
         assert!(response.contains("could not be decoded") || response.contains("rejected"));
+    }
+
+    #[test]
+    fn recognizes_real_lua_and_luau_bytecode_magic_bytes() {
+        assert!(has_lua_bytecode_signature(b"\x1bLua\x51"));
+        assert!(has_lua_bytecode_signature(b"\x1bLuau\x00"));
+        assert!(!has_lua_bytecode_signature(br"\x1bLua"));
     }
 
     #[test]
