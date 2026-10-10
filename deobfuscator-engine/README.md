@@ -33,3 +33,8 @@ This is a real decoder integration, not an original decompiler implementation fr
 
 ## Precision contract
 The engine never executes the analyzed script, guesses missing payloads, or labels partial output as a complete decompilation. The explicit loader-import feature only retrieves text from a narrowly allowlisted public Jnkie download URL. The source-mode passes are intentionally bounded and conservative. They are not a replacement for a full Luau parser or an opcode-level devirtualizer; additional syntax and VM formats should be added only with tests and captured fixtures.
+
+
+## No-op and protected VM behavior
+
+The source analyzer does not return byte-for-byte unchanged input as recovered output. When no supported rewrite changes the source, the output field is empty and the result reports that no transformation was produced. Luraph v14/v15 headers, plus a conservative headerless VM-table signature, are detected explicitly. Detection is not devirtualization: this WASM backend reports the unsupported VM instead of claiming success or fabricating a recovered script.
