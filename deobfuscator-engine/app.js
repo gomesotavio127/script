@@ -85,28 +85,36 @@ function renderResult(result) {
     $("findings").append(li);
   }
 
+  const isLoader = result.format === "Lua/Luau dynamic loader";
   const hasOutput = typeof result.output === "string" && result.output.length > 0;
   const transformations = Number(result.metrics?.transformations_total || 0);
   output.value = hasOutput ? result.output : "";
-  $("outputLabel").textContent = result.mode === "bytecode"
-    ? "Código Luau recuperado por descompilação"
-    : transformations > 0
-      ? "Código recuperado (transformações estáticas; pode ser parcial)"
-      : "Código de entrada normalizado (nenhuma desofuscação confirmada)";
+  $("outputLabel").textContent = isLoader
+    ? "Nenhum código protegido recuperado"
+    : result.mode === "bytecode"
+      ? "Código Luau recuperado por descompilação"
+      : transformations > 0
+        ? "Código recuperado (transformações estáticas; pode ser parcial)"
+        : "Código de entrada normalizado (nenhuma desofuscação confirmada)";
   output.hidden = !hasOutput;
   copyButton.disabled = !hasOutput;
   downloadButton.disabled = !hasOutput;
+  $("noSourceOutput").textContent = isLoader
+    ? "Foi detectado apenas um loader (carregador). O arquivo não contém o payload protegido que ele tenta obter. O motor não baixa nem executa conteúdo remoto; selecione um arquivo local que contenha o código protegido."
+    : "Este arquivo não foi descompilado. Confira o diagnóstico e a versão de bytecode suportada; formatos desconhecidos não produzem código fictício.";
   $("noSourceOutput").hidden = hasOutput;
-  const statusMessage = result.mode === "bytecode"
-    ? (hasOutput
-      ? "Bytecode descompilado pelo motor Rust. Revise os avisos; comentários e nomes originais podem não existir mais."
-      : "O decodificador não recuperou código deste arquivo. Nenhum resultado foi inventado.")
-    : transformations > 0
-      ? `${transformations.toLocaleString("pt-BR")} transformação(ões) estática(s) aplicada(s). Trechos não compreendidos foram preservados; confira os avisos.`
-      : "Nenhuma transformação estática compatível foi aplicada. Isto não significa que o código esteja desofuscado.";
+  const statusMessage = isLoader
+    ? "Entrada identificada como loader de 147 bytes; nenhum payload foi analisado. Selecione o arquivo local com o código protegido."
+    : result.mode === "bytecode"
+      ? (hasOutput
+        ? "Bytecode descompilado pelo motor Rust. Revise os avisos; comentários e nomes originais podem não existir mais."
+        : "O decodificador não recuperou código deste arquivo. Nenhum resultado foi inventado.")
+      : transformations > 0
+        ? `${transformations.toLocaleString("pt-BR")} transformação(ões) estática(s) aplicada(s). Trechos não compreendidos foram preservados; confira os avisos.`
+        : "Nenhuma transformação estática compatível foi aplicada. Isto não significa que o código esteja desofuscado.";
   setStatus(
     statusMessage,
-    result.warnings?.length || (result.mode === "source" && transformations === 0) ? "warning" : "success"
+    isLoader || result.warnings?.length || (result.mode === "source" && transformations === 0) ? "warning" : "success"
   );
 }
 
