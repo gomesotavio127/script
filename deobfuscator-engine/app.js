@@ -25,31 +25,29 @@ let lastResult = null;
 let currentLoaderUrl = "";
 
 function extractCompatibleLoaderUrl(source) {
-  // Normalize escaped URL separators often present in generated loaders.
   const normalized = String(source || "")
     .replaceAll("\\/", "/")
     .replaceAll("\\u002F", "/")
     .replaceAll("\\x2f", "/")
     .replaceAll("\\x3a", ":");
-  const match = normalized.match(/https:\/\/api[.]jnkie[.]com\/api\/v1\/luascripts\/public\/[a-z0-9_-]{12,128}\/download/i);
-  if (!match) return "";
-
-  try {
-    const parsed = new URL(match[0]);
-    if (
-      parsed.protocol === "https:" &&
-      parsed.hostname.toLowerCase() === "api.jnkie.com" &&
-      !parsed.port &&
-      !parsed.username &&
-      !parsed.password &&
-      !parsed.search &&
-      !parsed.hash &&
-      /^\/api\/v1\/luascripts\/public\/[a-z0-9_-]{12,128}\/download$/i.test(parsed.pathname)
-    ) {
-      return parsed.href;
+  const candidates = [];
+  const trimmed = normalized.trim();
+  if (/^https?:\/\//i.test(trimmed)) candidates.push(trimmed);
+  candidates.push(...(normalized.match(/https?:\/\/[^\s"'<>]+/gi) || []));
+  for (const candidate of candidates) {
+    const cleaned = candidate.replace(/[)\]},;]+$/g, "");
+    try {
+      const parsed = new URL(cleaned);
+      if (
+        (parsed.protocol === "https:" || parsed.protocol === "http:") &&
+        parsed.hostname &&
+        !parsed.username &&
+        !parsed.password &&
+        !parsed.hash
+      ) return parsed.href;
+    } catch {
+      // Keep looking for another public URL in the loader text.
     }
-  } catch {
-    // Invalid or incompatible URLs remain unavailable for import.
   }
   return "";
 }
@@ -212,7 +210,7 @@ function renderResult(result) {
   const isLoader = result.format === "Lua/Luau dynamic loader";
   currentLoaderUrl = isLoader ? extractCompatibleLoaderUrl(input.value) : "";
   loaderUrlInput.value = currentLoaderUrl;
-  loaderActions.hidden = !isLoader;
+  loaderActions.hidden = false;
   fetchPayloadButton.disabled = !currentLoaderUrl;
   loaderHelp.textContent = currentLoaderUrl
     ? "URL compatível detectada. A ferramenta obterá somente o texto, sem executar o conteúdo."
