@@ -91,7 +91,58 @@ fn quote_json_array(values: &[String]) -> String {
     format!("[{}]", items.join(","))
 }
 
+
+fn detected_luraph_vm_version(source: &str) -> Option<&'static str> {
+    let head = source.chars().take(1500).collect::<String>().to_ascii_lowercase();
+    if head.contains("this file was protected using luraph obfuscator v15") {
+        return Some("Luraph v15");
+    }
+    if head.contains("this file was protected using luraph obfuscator v14") {
+        return Some("Luraph v14");
+    }
+    if head.contains("this file was protected using luraph obfuscator") {
+        return Some("Luraph (version unknown)");
+    }
+
+    // Headerless Luraph builds often start with a large setmetatable VM table.
+    // Require several standard library references to avoid flagging ordinary tables.
+    let sample = source.trim_start().chars().take(200_000).collect::<String>().to_ascii_lowercase();
+    let library_hits = ["bit32.", "buffer.", "string.", "table.", "math."]
+        .iter()
+        .filter(|needle| sample.contains(**needle))
+        .count();
+    if sample.starts_with("return setmetatable({") && library_hits >= 3 {
+        return Some("Luraph-compatible VM signature");
+    }
+    None
+}
+
+fn protected_vm_diagnostic(source: &str, protection: &str) -> String {
+    let bytes = source.as_bytes().len();
+    let chars = source.chars().count();
+    let summary = format!(
+        "{} detected. This WebAssembly engine performs static transformations only and cannot reconstruct this custom virtual machine. No source was fabricated.",
+        protection
+    );
+    let warning = format!(
+        "{} was detected, but no compatible VM reconstruction backend is available in this engine. The input is intentionally not returned as recovered output.",
+        protection
+    );
+    format!(
+        "{{\\"ok\\":true,\\"engine\\":\\"Deobfuscator Lab Rust\\",\\"version\\":\\"{}\\",\\"mode\\":\\"source\\",\\"format\\":\\"Lua/Luau protected VM (Luraph)\\",\\"summary\\":\\"{}\\",\\"output\\":\\"\\",\\"metrics\\":{{\\"bytes\\":{},\\"characters\\":{},\\"output_bytes\\":0,\\"transformations_total\\":0,\\"analysis_rounds\\":0,\\"analysis_passes\\":0,\\"analysis_round_limit\\":32,\\"source_changed\\":false}},\\"findings\\":{},\\"warnings\\":{},\\"scope\\":\\"Static detection only. This backend does not devirtualize Luraph-protected source and does not execute the input.\\\"}}",
+        VERSION,
+        json_escape(&summary),
+        bytes,
+        chars,
+        quote_json_array(&vec![format!("Detected protected VM signature: {}", protection)]),
+        quote_json_array(&vec![warning])
+    )
+}
+
 fn analyze_source(source: &str) -> String {
+    if let Some(protection) = detected_luraph_vm_version(source) {
+        return protected_vm_diagnostic(source, protection);
+    }
     let (normalized, comments_removed, strings_normalized, long_strings_normalized, mut issues) =
         normalize_source(source);
     let lower = source.to_ascii_lowercase();
@@ -154,10 +205,16 @@ fn analyze_source(source: &str) -> String {
     } else {
         "Lua/Luau source"
     };
+    let source_changed = output != source;
+    let output_for_result = if !looks_like_loader && transformations > 0 && source_changed {
+        output.as_str()
+    } else {
+        ""
+    };
     let summary = if looks_like_loader {
         "Loader detected, but the protected payload is not present in this input. No remote content was fetched and no script was executed.".to_string()
-    } else if transformations == 0 {
-        "Analysis completed; no supported static transformation was applicable. The output is not claimed to be deobfuscated."
+    } else if transformations == 0 || !source_changed {
+        "Analysis completed; no transformed source was produced. The original input is not returned as recovered code."
             .to_string()
     } else {
         format!(
@@ -171,10 +228,10 @@ fn analyze_source(source: &str) -> String {
         VERSION,
         json_escape(format_name),
         json_escape(&summary),
-        json_escape(&output),
+        json_escape(output_for_result),
         bytes,
         chars,
-        output.as_bytes().len(),
+        output_for_result.as_bytes().len(),
         comments_removed,
         strings_normalized,
         long_strings_normalized,
@@ -187,6 +244,7 @@ fn analyze_source(source: &str) -> String {
         analysis_rounds,
         analysis_rounds * 5,
         if delimiter_ok { "balanced" } else { "mismatch" },
+        !output_for_result.is_empty(),
         quote_json_array(&findings),
         quote_json_array(&issues)
     )
@@ -2093,6 +2151,24 @@ mod tests {
         let response = analyze_source("return variable_name");
         assert!(response.contains("no supported static transformation was applicable"));
         assert!(response.contains("\"transformations_total\":0"));
+    }
+
+    #[test]
+    fn unchanged_source_is_not_emitted_as_recovered_output() {
+        let response = analyze_source("return variable_name");
+        assert!(response.contains("\\\"output\\\":\\\"\\\""), "unchanged input should not be repeated as output: {}", response);
+        assert!(response.contains("\\\"output_bytes\\\":0"), "there should be no output bytes for a no-op: {}", response);
+        assert!(response.contains("no transformed source was produced"));
+    }
+
+    #[test]
+    fn detects_luraph_v15_without_fabricating_source() {
+        let source = "-- This file was protected using Luraph Obfuscator v15.1.0 [https://lura.ph/]\nreturn setmetatable({[1]=bit32.bxor,[2]=string.char,[3]=buffer.create}, {})";
+        let response = analyze_source(source);
+        assert!(response.contains("Lua/Luau protected VM (Luraph)"));
+        assert!(response.contains("Luraph v15"));
+        assert!(response.contains("\\\"output\\\":\\\"\\\""));
+        assert!(response.contains("cannot reconstruct this custom virtual machine"));
     }
 
     #[test]
