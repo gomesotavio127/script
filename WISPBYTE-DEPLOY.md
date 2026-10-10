@@ -15,7 +15,7 @@ Esta configuração é isolada na branch \`wispbyte-deployment\`; não substitui
 
 - \`wispbyte-start.sh\` compila o motor Rust para WebAssembly se \`deobfuscator-engine/public/engine.wasm\` ainda não existir e reutiliza o arquivo nos reinícios seguintes.
 - \`wispbyte-server.js\` serve os arquivos estáticos e implementa \`POST /api/fetch-loader\`, que a interface já utiliza.
-- A API só aceita URLs públicas Jnkie no formato permitido, bloqueia redirecionamentos, limita a resposta a 4 MiB e não executa o código remoto.
+- A API aceita URLs HTTP/HTTPS públicas de diferentes domínios que retornem texto, bloqueia IPs privados/reservados e redirecionamentos, fixa o IP validado para reduzir risco de DNS rebinding, limita a resposta a 4 MiB e não executa o código remoto.
 - O servidor escuta em \`0.0.0.0\` e usa a porta indicada por \`PORT\`.
 
 ## Limitação conhecida
