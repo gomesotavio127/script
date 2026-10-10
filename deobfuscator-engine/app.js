@@ -208,13 +208,14 @@ function renderResult(result) {
   }
 
   const isLoader = result.format === "Lua/Luau dynamic loader";
-  currentLoaderUrl = isLoader ? extractCompatibleLoaderUrl(input.value) : "";
+  currentLoaderUrl = extractCompatibleLoaderUrl(loaderUrlInput.value) ||
+    (isLoader ? extractCompatibleLoaderUrl(input.value) : "");
   loaderUrlInput.value = currentLoaderUrl;
   loaderActions.hidden = false;
   fetchPayloadButton.disabled = !currentLoaderUrl;
   loaderHelp.textContent = currentLoaderUrl
-    ? "URL compatível detectada. A ferramenta obterá somente o texto, sem executar o conteúdo."
-    : "URL não detectada automaticamente. Você pode colar a URL pública Jnkie compatível neste campo.";
+    ? "URL HTTP/HTTPS reconhecida. A ferramenta obterá somente o texto, sem executar o conteúdo."
+    : "Cole uma URL pública HTTP/HTTPS que retorne diretamente o código-fonte.";
   const hasOutput = typeof result.output === "string" && result.output.length > 0;
   const transformations = Number(result.metrics?.transformations_total || 0);
   output.value = hasOutput ? result.output : "";
