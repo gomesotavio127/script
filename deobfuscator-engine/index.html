@@ -69,7 +69,7 @@
         <button id="downloadCompat" type="button" class="secondary">Baixar mapa de compatibilidade</button>
       </div>
     </section>
-    <p id="noSourceOutput" class="notice" hidden>Este arquivo não foi descompilado. Confira o diagnóstico e a versão de bytecode suportada; formatos desconhecidos não produzem código fictício.</p>
+    <p id="noSourceOutput" class="notice" hidden>A análise não produziu código recuperado. Consulte o diagnóstico e os avisos para identificar se o formato não é compatível ou se há uma inconsistência entre a interface e o motor.</p>
     <label id="outputLabel" for="output">Código recuperado (pode ser parcial)</label>
     <textarea id="output" spellcheck="false" hidden readonly></textarea>
     <div class="row" style="margin-top:12px">
@@ -80,6 +80,6 @@
 
   <p class="foot">Precisão primeiro: o motor tenta descompilar bytecode Luau suportado e aplica passes estáticos conservadores sobre fonte. A importação por URL pública retorna somente texto para análise; nenhum script é executado. Quando não há recuperação real, a saída fica vazia e o diagnóstico explica a limitação. <a href="https://github.com/gomesotavio127/script/tree/main/deobfuscator-engine">Código-fonte</a>.</p>
 </main>
-<script src="./app.js"></script>
+<script src="./app.js?v=20261010-2"></script>
 </body>
 </html>
