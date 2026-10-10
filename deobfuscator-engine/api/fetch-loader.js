@@ -1,5 +1,49 @@
+const dns = require("node:dns").promises;
+const net = require("node:net");
+
 const MAX_BYTES = 4 * 1024 * 1024;
-const LOADER_URL = /^https:\/\/api\.jnkie\.com\/api\/v1\/luascripts\/public\/[a-z0-9_-]{12,128}\/download$/i;
+const TIMEOUT_MS = 12000;
+
+function isPublicIPv4(address) {
+  if (net.isIP(address) !== 4) return false;
+  const [a, b, c, d] = address.split(".").map(Number);
+  if (![a, b, c, d].every((x) => Number.isInteger(x) && x >= 0 && x <= 255)) return false;
+  if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
+  if (a === 100 && b >= 64 && b <= 127) return false;
+  if (a === 169 && b === 254) return false;
+  if (a === 172 && b >= 16 && b <= 31) return false;
+  if (a === 192 && b === 168) return false;
+  if (a === 192 && b === 0 && (c === 0 || c === 2)) return false;
+  if (a === 192 && b === 88 && c === 99) return false;
+  if (a === 198 && (b === 18 || b === 19 || (b === 51 && c === 100))) return false;
+  if (a === 203 && b === 0 && c === 113) return false;
+  if (a === 255 && b === 255 && c === 255 && d === 255) return false;
+  return true;
+}
+
+async function requirePublicHost(hostname) {
+  const ipType = net.isIP(hostname);
+  if (ipType === 4) {
+    if (!isPublicIPv4(hostname)) throw new Error("Endereços IP privados ou reservados não são permitidos.");
+    return;
+  }
+  if (ipType === 6) {
+    throw new Error("Informe o domínio público em vez de um endereço IPv6 literal.");
+  }
+  if (!hostname || hostname === "localhost" || hostname.endsWith(".localhost") ||
+      hostname.endsWith(".local") || hostname.endsWith(".internal")) {
+    throw new Error("Somente domínios públicos podem ser importados.");
+  }
+  let records;
+  try {
+    records = await dns.lookup(hostname, { all: true, verbatim: true, family: 4 });
+  } catch {
+    throw new Error("Não foi possível resolver o domínio público.");
+  }
+  if (!records.length || records.some((record) => !isPublicIPv4(record.address))) {
+    throw new Error("O domínio não resolve exclusivamente para endereços IPv4 públicos.");
+  }
+}
 
 module.exports = async function fetchLoader(req, res) {
   res.setHeader("Cache-Control", "no-store");
@@ -7,10 +51,14 @@ module.exports = async function fetchLoader(req, res) {
 
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
-    return res.status(405).json({ ok: false, error: "Use POST para solicitar o texto do loader." });
+    return res.status(405).json({ ok: false, error: "Use POST para importar o texto de uma URL pública." });
   }
 
-  const rawUrl = typeof req.body?.url === "string" ? req.body.url : "";
+  const rawUrl = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+  if (!rawUrl || rawUrl.length > 4096) {
+    return res.status(400).json({ ok: false, error: "Informe uma URL HTTP/HTTPS válida." });
+  }
+
   let target;
   try {
     target = new URL(rawUrl);
@@ -18,36 +66,29 @@ module.exports = async function fetchLoader(req, res) {
     return res.status(400).json({ ok: false, error: "URL inválida." });
   }
 
-  // Strict allowlist: only public Jnkie script-download URLs, never arbitrary
-  // hosts, ports, query strings, credentials, or redirect targets.
-  if (
-    target.protocol !== "https:" ||
-    target.hostname !== "api.jnkie.com" ||
-    target.port ||
-    target.username ||
-    target.password ||
-    target.search ||
-    target.hash ||
-    !LOADER_URL.test(target.href)
-  ) {
+  if ((target.protocol !== "https:" && target.protocol !== "http:") ||
+      target.username || target.password || target.hash ||
+      (target.port && !["80", "443"].includes(target.port))) {
     return res.status(400).json({
       ok: false,
-      error: "Só é permitido obter texto de URLs públicas Jnkie no formato compatível."
+      error: "Use uma URL HTTP/HTTPS pública, sem credenciais, fragmento ou porta não padrão."
     });
   }
 
   try {
+    await requirePublicHost(target.hostname);
+
     const remote = await fetch(target.href, {
       method: "GET",
       redirect: "manual",
-      headers: { Accept: "text/plain, application/octet-stream" },
-      signal: AbortSignal.timeout(12000)
+      headers: { Accept: "text/plain, application/javascript, application/x-lua, application/octet-stream;q=0.9, */*;q=0.1" },
+      signal: AbortSignal.timeout(TIMEOUT_MS)
     });
 
     if (remote.status >= 300 && remote.status < 400) {
       return res.status(502).json({
         ok: false,
-        error: "A fonte redirecionou para outro endereço; o motor bloqueou o redirecionamento por segurança."
+        error: "A URL redireciona para outro endereço. Cole a URL final do arquivo."
       });
     }
     if (!remote.ok) {
@@ -57,27 +98,49 @@ module.exports = async function fetchLoader(req, res) {
       });
     }
 
-    const declaredSize = Number(remote.headers.get("content-length") || 0);
-    if (declaredSize > MAX_BYTES) {
-      await remote.body?.cancel();
-      return res.status(413).json({ ok: false, error: "O payload ultrapassa o limite de 4 MiB desta importação." });
-    }
-
     const contentType = (remote.headers.get("content-type") || "").toLowerCase();
-    if (contentType.includes("text/html")) {
+    if (contentType.includes("text/html") || contentType.includes("application/xhtml+xml")) {
       await remote.body?.cancel();
-      return res.status(502).json({
+      return res.status(415).json({
         ok: false,
-        error: "A fonte respondeu com uma página HTML, não com código-fonte. O conteúdo não foi enviado ao analisador."
+        error: "A URL retornou HTML, não o código-fonte. Use o link direto/raw do arquivo."
       });
     }
 
-    const bytes = new Uint8Array(await remote.arrayBuffer());
-    if (bytes.byteLength === 0) {
+    const declaredSize = Number(remote.headers.get("content-length") || 0);
+    if (declaredSize > MAX_BYTES) {
+      await remote.body?.cancel();
+      return res.status(413).json({ ok: false, error: "O arquivo ultrapassa o limite de 4 MiB." });
+    }
+
+    if (!remote.body) {
+      return res.status(502).json({ ok: false, error: "A fonte remota não retornou conteúdo." });
+    }
+
+    const reader = remote.body.getReader();
+    const chunks = [];
+    let total = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_BYTES) {
+        await reader.cancel();
+        return res.status(413).json({ ok: false, error: "O arquivo ultrapassa o limite de 4 MiB." });
+      }
+      chunks.push(value);
+    }
+
+    if (!total) {
       return res.status(502).json({ ok: false, error: "A fonte remota retornou um arquivo vazio." });
     }
-    if (bytes.byteLength > MAX_BYTES) {
-      return res.status(413).json({ ok: false, error: "O payload ultrapassa o limite de 4 MiB desta importação." });
+
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
     }
 
     let source;
@@ -86,12 +149,11 @@ module.exports = async function fetchLoader(req, res) {
     } catch {
       return res.status(415).json({ ok: false, error: "A resposta não é texto UTF-8 reconhecível." });
     }
+
     const prefix = source.trimStart().slice(0, 512).toLowerCase();
-    if (prefix.startsWith("<!doctype html") || /<html[\s>]/i.test(prefix)) {
-      return res.status(502).json({ ok: false, error: "A fonte devolveu uma página HTML/bloqueio em vez do payload Lua." });
-    }
-    if (!source.trim() || source.includes("\0")) {
-      return res.status(415).json({ ok: false, error: "A resposta não parece ser código-fonte textual." });
+    if (!source.trim() || source.includes("\0") ||
+        prefix.startsWith("<!doctype html") || /<html[\s>]/i.test(prefix)) {
+      return res.status(415).json({ ok: false, error: "A URL não retornou texto de código-fonte reconhecível." });
     }
 
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
@@ -104,7 +166,7 @@ module.exports = async function fetchLoader(req, res) {
       ok: false,
       error: isTimeout
         ? "A fonte remota demorou demais para responder."
-        : "Não foi possível obter o texto da fonte remota."
+        : (error?.message || "Não foi possível obter o texto da fonte remota.")
     });
   }
 };
