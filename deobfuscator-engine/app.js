@@ -104,7 +104,7 @@ function renderResult(result) {
     : "Este arquivo não foi descompilado. Confira o diagnóstico e a versão de bytecode suportada; formatos desconhecidos não produzem código fictício.";
   $("noSourceOutput").hidden = hasOutput;
   const statusMessage = isLoader
-    ? "Entrada identificada como loader de 147 bytes; nenhum payload foi analisado. Selecione o arquivo local com o código protegido."
+    ? `Entrada identificada como loader de ${Number(result.metrics?.bytes || 0).toLocaleString("pt-BR")} bytes; nenhum payload foi analisado. Selecione o arquivo local com o código protegido.`
     : result.mode === "bytecode"
       ? (hasOutput
         ? "Bytecode descompilado pelo motor Rust. Revise os avisos; comentários e nomes originais podem não existir mais."
