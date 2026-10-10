@@ -115,11 +115,11 @@ function renderResult(result) {
   copyButton.disabled = !hasOutput;
   downloadButton.disabled = !hasOutput;
   $("noSourceOutput").textContent = isLoader
-    ? "Foi detectado apenas um loader (carregador). O arquivo não contém o payload protegido que ele tenta obter. O motor não baixa nem executa conteúdo remoto; selecione um arquivo local que contenha o código protegido."
+    ? "Foi detectado apenas um loader (carregador). Use “Obter texto do loader” para tentar importar a fonte compatível; o texto recebido será analisado sem executar o script."
     : "Este arquivo não foi descompilado. Confira o diagnóstico e a versão de bytecode suportada; formatos desconhecidos não produzem código fictício.";
   $("noSourceOutput").hidden = hasOutput;
   const statusMessage = isLoader
-    ? `Entrada identificada como loader de ${Number(result.metrics?.bytes || 0).toLocaleString("pt-BR")} bytes; nenhum payload foi analisado. Selecione o arquivo local com o código protegido.`
+    ? `Entrada identificada como loader de ${Number(result.metrics?.bytes || 0).toLocaleString("pt-BR")} bytes; nenhum payload foi analisado ainda. Use “Obter texto do loader” ou selecione a captura local.`
     : result.mode === "bytecode"
       ? (hasOutput
         ? "Bytecode descompilado pelo motor Rust. Revise os avisos; comentários e nomes originais podem não existir mais."
