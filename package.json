@@ -1,0 +1,12 @@
+{
+  "name": "deobfuscator-rust-wispbyte",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WispByte launcher for Deobfuscator Lab Rust/WebAssembly",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "bash ./wispbyte-start.sh"
+  }
+}
