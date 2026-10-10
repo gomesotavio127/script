@@ -129,7 +129,7 @@ fn protected_vm_diagnostic(source: &str, protection: &str) -> String {
         protection
     );
     format!(
-        "{{\\"ok\\":true,\\"engine\\":\\"Deobfuscator Lab Rust\\",\\"version\\":\\"{}\\",\\"mode\\":\\"source\\",\\"format\\":\\"Lua/Luau protected VM (Luraph)\\",\\"summary\\":\\"{}\\",\\"output\\":\\"\\",\\"metrics\\":{{\\"bytes\\":{},\\"characters\\":{},\\"output_bytes\\":0,\\"transformations_total\\":0,\\"analysis_rounds\\":0,\\"analysis_passes\\":0,\\"analysis_round_limit\\":32,\\"source_changed\\":false}},\\"findings\\":{},\\"warnings\\":{},\\"scope\\":\\"Static detection only. This backend does not devirtualize Luraph-protected source and does not execute the input.\\\"}}",
+        "{{\"ok\":true,\"engine\":\"Deobfuscator Lab Rust\",\"version\":\"{}\",\"mode\":\"source\",\"format\":\"Lua/Luau protected VM (Luraph)\",\"summary\":\"{}\",\"output\":\"\",\"metrics\":{{\"bytes\":{},\"characters\":{},\"output_bytes\":0,\"transformations_total\":0,\"analysis_rounds\":0,\"analysis_passes\":0,\"analysis_round_limit\":32,\"source_changed\":false}},\"findings\":{},\"warnings\":{},\"scope\":\"Static detection only. This backend does not devirtualize Luraph-protected source and does not execute the input.\"}}",
         VERSION,
         json_escape(&summary),
         bytes,
@@ -224,7 +224,7 @@ fn analyze_source(source: &str) -> String {
     };
 
     format!(
-        "{{\"ok\":true,\"engine\":\"Deobfuscator Lab Rust\",\"version\":\"{}\",\"mode\":\"source\",\"format\":\"{}\",\"summary\":\"{}\",\"output\":\"{}\",\"metrics\":{{\"bytes\":{},\"characters\":{},\"output_bytes\":{},\"comments_removed\":{},\"strings_normalized\":{},\"long_strings_normalized\":{},\"constant_expressions_folded\":{},\"static_calls_folded\":{},\"local_constants_propagated\":{},\"constant_table_indices_folded\":{},\"constant_branches_removed\":{},\"transformations_total\":{},\"analysis_rounds\":{},\"analysis_passes\":{},\"analysis_round_limit\":32,\"delimiter_check\":\"{}\"}},\"findings\":{},\"warnings\":{},\"scope\":\"Deterministic static source recovery; no script execution, network access, or model calls. Only understood constant expressions, selected pure string calls, simple local constants, and provably constant branches are rewritten. Unsupported syntax is preserved.\"}}",
+        "{{\"ok\":true,\"engine\":\"Deobfuscator Lab Rust\",\"version\":\"{}\",\"mode\":\"source\",\"format\":\"{}\",\"summary\":\"{}\",\"output\":\"{}\",\"metrics\":{{\"bytes\":{},\"characters\":{},\"output_bytes\":{},\"comments_removed\":{},\"strings_normalized\":{},\"long_strings_normalized\":{},\"constant_expressions_folded\":{},\"static_calls_folded\":{},\"local_constants_propagated\":{},\"constant_table_indices_folded\":{},\"constant_branches_removed\":{},\"transformations_total\":{},\"analysis_rounds\":{},\"analysis_passes\":{},\"analysis_round_limit\":32,\"delimiter_check\":\"{}\",\"source_changed\":{}}},\"findings\":{},\"warnings\":{},\"scope\":\"Deterministic static source recovery; no script execution, network access, or model calls. Only understood constant expressions, selected pure string calls, simple local constants, and provably constant branches are rewritten. Unsupported syntax is preserved.\"}}",
         VERSION,
         json_escape(format_name),
         json_escape(&summary),
