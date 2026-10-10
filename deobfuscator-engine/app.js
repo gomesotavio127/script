@@ -13,6 +13,7 @@ let fileData = null;
 let fileName = "";
 let worker = null;
 let initialized = false;
+let lastResult = null;
 
 function setStatus(message, kind = "") {
   statusEl.textContent = message;
@@ -56,6 +57,7 @@ function getWorker() {
 }
 
 function renderResult(result) {
+  lastResult = result;
   results.hidden = false;
   $("summary").textContent = result.summary || result.error || "Análise concluída.";
   $("engineTag").textContent = (result.engine || "motor") + " v" + (result.version || "?") + " · " + (result.mode || "");
@@ -84,17 +86,27 @@ function renderResult(result) {
   }
 
   const hasOutput = typeof result.output === "string" && result.output.length > 0;
+  const transformations = Number(result.metrics?.transformations_total || 0);
   output.value = hasOutput ? result.output : "";
-  $("outputLabel").textContent = result.mode === "bytecode" ? "Código Luau recuperado" : "Código normalizado (não é descompilação completa)";
+  $("outputLabel").textContent = result.mode === "bytecode"
+    ? "Código Luau recuperado por descompilação"
+    : transformations > 0
+      ? "Código recuperado (transformações estáticas; pode ser parcial)"
+      : "Código de entrada normalizado (nenhuma desofuscação confirmada)";
   output.hidden = !hasOutput;
   copyButton.disabled = !hasOutput;
   downloadButton.disabled = !hasOutput;
   $("noSourceOutput").hidden = hasOutput;
+  const statusMessage = result.mode === "bytecode"
+    ? (hasOutput
+      ? "Bytecode descompilado pelo motor Rust. Revise os avisos; comentários e nomes originais podem não existir mais."
+      : "O decodificador não recuperou código deste arquivo. Nenhum resultado foi inventado.")
+    : transformations > 0
+      ? `${transformations.toLocaleString("pt-BR")} transformação(ões) estática(s) aplicada(s). Trechos não compreendidos foram preservados; confira os avisos.`
+      : "Nenhuma transformação estática compatível foi aplicada. Isto não significa que o código esteja desofuscado.";
   setStatus(
-    result.mode === "bytecode"
-      ? (hasOutput ? "Bytecode descompilado pelo motor Rust. Revise o resultado; nomes e comentários originais podem não existir mais." : "O decodificador não conseguiu recuperar código deste arquivo; nenhum resultado foi inventado.")
-      : "Análise concluída sem IA externa. Confira os avisos antes de confiar no resultado.",
-    result.warnings?.length ? "warning" : "success"
+    statusMessage,
+    result.warnings?.length || (result.mode === "source" && transformations === 0) ? "warning" : "success"
   );
 }
 
@@ -169,7 +181,10 @@ downloadButton.addEventListener("click", () => {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = (fileName.replace(/\.[^.]+$/, "") || "source") + ".normalized.lua";
+  const baseName = fileName.replace(/\.[^.]+$/, "") || "source";
+  const recovered = lastResult?.mode === "bytecode"
+    || Number(lastResult?.metrics?.transformations_total || 0) > 0;
+  anchor.download = baseName + (recovered ? ".recovered.lua" : ".analysis.lua");
   anchor.click();
   URL.revokeObjectURL(url);
 });
@@ -179,6 +194,7 @@ $("clear").addEventListener("click", () => {
   fileInput.value = "";
   fileData = null;
   fileName = "";
+  lastResult = null;
   results.hidden = true;
   output.value = "";
   setStatus("Pronto para analisar.");
