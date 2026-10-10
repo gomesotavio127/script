@@ -597,7 +597,7 @@ fn inspect_bytecode(bytes: &[u8]) -> String {
                     bytecode_version, encode_key
                 );
                 return format!(
-                    "{{\\"ok\\":true,\\"engine\\":\\"Deobfuscator Lab Rust + Tovek\\",\\"version\\":\\"{}\\",\\"mode\\":\\"bytecode\\",\\"format\\":\\"Luau bytecode\\",\\"summary\\":\\"{}\\",\\"output\\":\\"{}\\",\\"metrics\\":{{\\"bytes\\":{},\\"bytecode_version\\":\\"{}\\",\\"decode_key\\":{},\\"output_characters\\":{},\\"output_lines\\":{}}},\\"findings\\":{},\\"warnings\\":{},\\"scope\\":\\"Static bytecode decompilation by Tovek v2.5.1; no script execution. Original comments and source identifiers may not be recoverable.\\"}}",
+                    "{{\"ok\":true,\"engine\":\"Deobfuscator Lab Rust + Tovek\",\"version\":\"{}\",\"mode\":\"bytecode\",\"format\":\"Luau bytecode\",\"summary\":\"{}\",\"output\":\"{}\",\"metrics\":{{\"bytes\":{},\"bytecode_version\":\"{}\",\"decode_key\":{},\"output_characters\":{},\"output_lines\":{}}},\"findings\":{},\"warnings\":{},\"scope\":\"Static bytecode decompilation by Tovek v2.5.1; no script execution. Original comments and source identifiers may not be recoverable.\"}}",
                     VERSION,
                     json_escape(&summary),
                     json_escape(&source),
