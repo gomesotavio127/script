@@ -29,7 +29,7 @@
 
   <section class="panel">
     <h2>Entrada</h2>
-    <div class="notice">O motor roda localmente no navegador via Rust/WebAssembly, sem IA externa. Bytecode Luau padrão v3–v9 é decodificado para código recuperado; formatos não reconhecidos geram avisos em vez de uma saída inventada.</div>
+    <div class="notice">O motor roda localmente no navegador via Rust/WebAssembly, sem IA externa e sem executar o script. Para fonte Lua/Luau, aplica transformações estáticas comprováveis: expressões constantes, chamadas puras de string, constantes locais simples e ramos de controle cujo resultado é conhecido. Bytecode Luau padrão v3–v9 passa pelo descompilador; loaders, VMs próprias e formatos não reconhecidos geram avisos em vez de código inventado.</div>
     <form id="form">
       <label for="mode">Tipo de entrada</label>
       <select id="mode">
@@ -56,7 +56,7 @@
     <h2>Achados e avisos</h2>
     <ul id="findings" class="findings"></ul>
     <p id="noSourceOutput" class="notice" hidden>Este arquivo não foi descompilado. Confira o diagnóstico e a versão de bytecode suportada; formatos desconhecidos não produzem código fictício.</p>
-    <label id="outputLabel" for="output">Código normalizado (não é descompilação completa)</label>
+    <label id="outputLabel" for="output">Código recuperado (pode ser parcial)</label>
     <textarea id="output" spellcheck="false" hidden readonly></textarea>
     <div class="row" style="margin-top:12px">
       <button id="copy" type="button" class="secondary" disabled>Copiar código</button>
@@ -64,7 +64,7 @@
     </div>
   </section>
 
-  <p class="foot">Precisão primeiro: o motor descompila bytecode Luau padrão v3–v9 e normaliza código-fonte de forma conservadora. Não remove código morto nem promete reconstruir wrappers/VMs de formatos não reconhecidos. <a href="https://github.com/gomesotavio127/script/tree/deobfuscator-engine-v1/deobfuscator-engine">Código-fonte</a>.</p>
+  <p class="foot">Precisão primeiro: o motor descompila bytecode Luau padrão v3–v9 e aplica passes estáticos conservadores sobre fonte, incluindo folding de constantes e eliminação de ramos comprovadamente inalcançáveis. Não executa o script nem busca payload remoto; wrappers/VMs proprietárias podem permanecer sem reconstrução. <a href="https://github.com/gomesotavio127/script/tree/deobfuscator-engine-v1/deobfuscator-engine">Código-fonte</a>.</p>
 </main>
 <script src="./app.js"></script>
 </body>
