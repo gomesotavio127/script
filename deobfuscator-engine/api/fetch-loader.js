@@ -76,21 +76,51 @@ module.exports = async function fetchLoader(req, res) {
   }
 
   try {
-    await requirePublicHost(target.hostname);
+    let current = target;
+    let remote;
+    const visited = new Set();
 
-    const remote = await fetch(target.href, {
-      method: "GET",
-      redirect: "manual",
-      headers: { Accept: "text/plain, application/javascript, application/x-lua, application/octet-stream;q=0.9, */*;q=0.1" },
-      signal: AbortSignal.timeout(TIMEOUT_MS)
-    });
+    for (let hop = 0; hop <= 5; hop++) {
+      if ((current.protocol !== "https:" && current.protocol !== "http:") ||
+          current.username || current.password || current.hash ||
+          (current.port && !["80", "443"].includes(current.port))) {
+        throw new Error("O redirecionamento levou a uma URL não permitida.");
+      }
+      if (current.protocol === "http:" && target.protocol === "https:") {
+        throw new Error("O redirecionamento tentou sair de HTTPS para HTTP.");
+      }
+      if (visited.has(current.href)) {
+        throw new Error("A URL entrou em um ciclo de redirecionamento.");
+      }
+      visited.add(current.href);
+      await requirePublicHost(current.hostname);
 
-    if (remote.status >= 300 && remote.status < 400) {
-      return res.status(502).json({
-        ok: false,
-        error: "A URL redireciona para outro endereço. Cole a URL final do arquivo."
+      remote = await fetch(current.href, {
+        method: "GET",
+        redirect: "manual",
+        headers: { Accept: "text/plain, application/javascript, application/x-lua, application/octet-stream;q=0.9, */*;q=0.1" },
+        signal: AbortSignal.timeout(TIMEOUT_MS)
       });
+
+      if (![301, 302, 303, 307, 308].includes(remote.status)) break;
+
+      const location = remote.headers.get("location");
+      await remote.body?.cancel();
+      if (!location) {
+        return res.status(502).json({ ok: false, error: "A fonte respondeu com redirecionamento sem destino." });
+      }
+      if (hop === 5) {
+        return res.status(502).json({ ok: false, error: "A URL excedeu o limite de 5 redirecionamentos." });
+      }
+
+      try {
+        current = new URL(location, current);
+      } catch {
+        return res.status(502).json({ ok: false, error: "A fonte respondeu com um redirecionamento inválido." });
+      }
     }
+
+    if (!remote) throw new Error("A fonte remota não retornou resposta.");
     if (!remote.ok) {
       return res.status(502).json({
         ok: false,
