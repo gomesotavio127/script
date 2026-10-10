@@ -29,12 +29,12 @@
 
   <section class="panel">
     <h2>Entrada</h2>
-    <div class="notice">Modo conservador: normaliza comentários e literais de strings que consegue interpretar com segurança. Não inventa instruções nem afirma recuperar partes ausentes.</div>
+    <div class="notice">O motor roda localmente no navegador via Rust/WebAssembly, sem IA externa. Bytecode Luau padrão v3–v9 é decodificado para código recuperado; formatos não reconhecidos geram avisos em vez de uma saída inventada.</div>
     <form id="form">
       <label for="mode">Tipo de entrada</label>
       <select id="mode">
         <option value="source">Código-fonte Lua/Luau</option>
-        <option value="bytecode">Bytecode / arquivo binário (inspeção do cabeçalho)</option>
+        <option value="bytecode">Bytecode Luau (.luac) — descompilar</option>
       </select>
       <label for="file">Arquivo opcional (.lua, .luau, .txt, .luac, .bytecode)</label>
       <input id="file" type="file" accept=".lua,.luau,.txt,.luac,.bytecode,.bc,text/plain,application/octet-stream">
@@ -55,7 +55,7 @@
     <div id="metrics" class="metrics"></div>
     <h2>Achados e avisos</h2>
     <ul id="findings" class="findings"></ul>
-    <p id="noSourceOutput" class="notice" hidden>Esta versão ainda não descompila instruções de bytecode; mostra apenas o formato/cabeçalho reconhecido e seus limites.</p>
+    <p id="noSourceOutput" class="notice" hidden>Este arquivo não foi descompilado. Confira o diagnóstico e a versão de bytecode suportada; formatos desconhecidos não produzem código fictício.</p>
     <label id="outputLabel" for="output">Código normalizado (não é descompilação completa)</label>
     <textarea id="output" spellcheck="false" hidden readonly></textarea>
     <div class="row" style="margin-top:12px">
@@ -64,7 +64,7 @@
     </div>
   </section>
 
-  <p class="foot">Precisão primeiro: quando o motor não entende uma construção, ele deve preservar o texto e avisar. V1 não implementa descompilação de bytecode, remoção de código morto ou reconstrução de VM. <a href="https://github.com/gomesotavio127/script/tree/deobfuscator-engine-v1/deobfuscator-engine">Código-fonte</a>.</p>
+  <p class="foot">Precisão primeiro: o motor descompila bytecode Luau padrão v3–v9 e normaliza código-fonte de forma conservadora. Não remove código morto nem promete reconstruir wrappers/VMs de formatos não reconhecidos. <a href="https://github.com/gomesotavio127/script/tree/deobfuscator-engine-v1/deobfuscator-engine">Código-fonte</a>.</p>
 </main>
 <script src="./app.js"></script>
 </body>
