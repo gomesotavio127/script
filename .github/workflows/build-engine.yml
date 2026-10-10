@@ -6,6 +6,7 @@ on:
       - main
       - deobfuscator-engine-v1
       - upgrade/tovek-luau-bytecode
+      - feature/luraph-v15-local-engine
   workflow_dispatch:
 
 permissions:
