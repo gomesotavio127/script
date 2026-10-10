@@ -24,36 +24,25 @@ let initialized = false;
 let lastResult = null;
 let currentLoaderUrl = "";
 
-function extractCompatibleLoaderUrl(source) {
-  // Normalize escaped URL separators often present in generated loaders.
+function extractRemoteSourceUrl(source) {
   const normalized = String(source || "")
     .replaceAll("\\/", "/")
     .replaceAll("\\u002F", "/")
     .replaceAll("\\x2f", "/")
     .replaceAll("\\x3a", ":");
-  const match = normalized.match(/https:\/\/api[.]jnkie[.]com\/api\/v1\/luascripts\/public\/[a-z0-9_-]{12,128}\/download/i);
-  if (!match) return "";
-
-  try {
-    const parsed = new URL(match[0]);
-    if (
-      parsed.protocol === "https:" &&
-      parsed.hostname.toLowerCase() === "api.jnkie.com" &&
-      !parsed.port &&
-      !parsed.username &&
-      !parsed.password &&
-      !parsed.search &&
-      !parsed.hash &&
-      /^\/api\/v1\/luascripts\/public\/[a-z0-9_-]{12,128}\/download$/i.test(parsed.pathname)
-    ) {
-      return parsed.href;
-    }
-  } catch {
-    // Invalid or incompatible URLs remain unavailable for import.
+  const direct = normalized.trim();
+  const candidates = [];
+  if (direct) candidates.push(direct);
+  candidates.push(...(normalized.match(/https?:\/\/[^\s"\'<>]+/gi) || []));
+  for (const candidate of candidates) {
+    const cleaned = candidate.replace(/[)\]},;.]+$/g, "");
+    try {
+      const parsed = new URL(cleaned);
+      if ((parsed.protocol === "https:" || parsed.protocol === "http:") && parsed.hostname && !parsed.username && !parsed.password && !parsed.hash) return parsed.href;
+    } catch { /* Continue trying other URL-like strings. */ }
   }
   return "";
 }
-
 function setStatus(message, kind = "") {
   statusEl.textContent = message;
   statusEl.dataset.kind = kind;
@@ -210,13 +199,12 @@ function renderResult(result) {
   }
 
   const isLoader = result.format === "Lua/Luau dynamic loader";
-  currentLoaderUrl = isLoader ? extractCompatibleLoaderUrl(input.value) : "";
+  currentLoaderUrl = isLoader ? extractRemoteSourceUrl(input.value) : "";
   loaderUrlInput.value = currentLoaderUrl;
-  loaderActions.hidden = !isLoader;
-  fetchPayloadButton.disabled = !currentLoaderUrl;
+  fetchPayloadButton.disabled = !extractRemoteSourceUrl(loaderUrlInput.value);
   loaderHelp.textContent = currentLoaderUrl
-    ? "URL compatível detectada. A ferramenta obterá somente o texto, sem executar o conteúdo."
-    : "URL não detectada automaticamente. Você pode colar a URL pública Jnkie compatível neste campo.";
+    ? "URL HTTP/HTTPS reconhecida. O texto será importado sem executar o conteúdo."
+    : "Cole uma URL pública HTTP/HTTPS que retorne diretamente o código-fonte.";
   const hasOutput = typeof result.output === "string" && result.output.length > 0;
   const transformations = Number(result.metrics?.transformations_total || 0);
   output.value = hasOutput ? result.output : "";
@@ -287,24 +275,24 @@ $("form").addEventListener("submit", (event) => {
 });
 
 loaderUrlInput.addEventListener("input", () => {
-  currentLoaderUrl = extractCompatibleLoaderUrl(loaderUrlInput.value);
-  fetchPayloadButton.disabled = !currentLoaderUrl;
+  currentLoaderUrl = extractRemoteSourceUrl(loaderUrlInput.value);
+  fetchPayloadButton.disabled = !extractRemoteSourceUrl(loaderUrlInput.value);
   loaderHelp.textContent = currentLoaderUrl
-    ? "URL compatível validada. A ferramenta obterá somente o texto, sem executar o conteúdo."
-    : "Cole uma URL pública Jnkie compatível com o formato aceito.";
+    ? "URL HTTP/HTTPS reconhecida. O texto será importado sem executar o conteúdo."
+    : "Cole uma URL pública HTTP/HTTPS que retorne diretamente o código-fonte.";
 });
 
 fetchPayloadButton.addEventListener("click", async () => {
-  const url = extractCompatibleLoaderUrl(loaderUrlInput.value) || currentLoaderUrl;
+  const url = extractRemoteSourceUrl(loaderUrlInput.value) || currentLoaderUrl;
   if (!url) {
-    setStatus("Cole uma URL pública Jnkie compatível no campo.", "error");
+    setStatus("Cole uma URL HTTP/HTTPS pública válida no campo.", "error");
     return;
   }
 
   fetchPayloadButton.disabled = true;
   setStatus("Obtendo somente o texto do payload remoto — o script não será executado…", "warning");
   try {
-    const response = await fetch("./api/fetch-loader", {
+    const response = await fetch("./api/fetch-source", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Accept": "text/plain, application/json" },
       body: JSON.stringify({ url })
