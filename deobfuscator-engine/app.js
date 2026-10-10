@@ -12,6 +12,10 @@ const loaderActions = $("loaderActions");
 const loaderUrlInput = $("loaderUrl");
 const fetchPayloadButton = $("fetchPayload");
 const loaderHelp = $("loaderHelp");
+const compatPanel = $("compatPanel");
+const compatSummary = $("compatSummary");
+const compatReport = $("compatReport");
+const downloadCompatButton = $("downloadCompat");
 
 let fileData = null;
 let fileName = "";
@@ -91,9 +95,94 @@ function getWorker() {
   return worker;
 }
 
+const COMPAT_API_GROUPS = [
+  {
+    title: "Loader e rede",
+    names: ["loadstring", "game:HttpGet", "HttpGet", "request", "http_request", "syn.request", "http.request"],
+    guidance: "Registrar a dependência. Para análise offline, usar uma resposta gravada e fictícia; não fazer chamadas de rede automaticamente."
+  },
+  {
+    title: "Identidade do executor",
+    names: ["identifyexecutor", "getexecutorname", "getexecutorversion", "isexecutorclosure"],
+    guidance: "Não falsificar a identidade de um executor real. Em código próprio, substituir a checagem por um perfil MOCK declarado."
+  },
+  {
+    title: "Ambiente e registro",
+    names: ["getgenv", "getrenv", "getreg", "getgc"],
+    guidance: "Mapear o escopo e as dependências necessárias. Não expor o ambiente real do Roblox em testes locais."
+  },
+  {
+    title: "Hooks e introspecção",
+    names: ["hookfunction", "hookmetamethod", "newcclosure", "checkcaller", "getnamecallmethod", "getupvalue", "setupvalue", "getconstants", "getprotos", "getstack", "getconnections", "firesignal", "cloneref", "compareinstances"],
+    guidance: "Não há equivalente fiel fora do runtime. Marcar como não suportado em vez de instalar hooks ou alterar o comportamento do jogo."
+  },
+  {
+    title: "Arquivos locais",
+    names: ["readfile", "writefile", "appendfile", "isfile", "isfolder", "makefolder", "listfiles", "delfile", "delfolder", "loadfile", "dofile"],
+    guidance: "Usar fixtures locais controladas e leitura limitada; não permitir gravação ou exclusão arbitrária."
+  },
+  {
+    title: "Criptografia e codificação",
+    names: ["crypt.", "syn.crypt", "base64", "lz4", "zlib", "bit32."],
+    guidance: "Identificar o algoritmo e os dados de entrada. Implementar apenas transformação pura conhecida e validar com fixtures."
+  },
+  {
+    title: "Interface, desenho e conexão",
+    names: ["gethui", "get_hidden_gui", "Drawing.new", "WebSocket.connect", "queue_on_teleport", "setclipboard", "getclipboard"],
+    guidance: "Registrar como dependência de plataforma. Em testes, usar um adaptador transparente sem interface real, sockets ou efeitos no jogo."
+  }
+];
+
+function buildCompatibilityReport(source) {
+  const text = String(source || "");
+  const lines = [
+    "FUSCATOR LAB — MAPA ESTÁTICO DE COMPATIBILIDADE",
+    "Perfil: MOCK TRANSPARENTE / análise sem execução",
+    "Este relatório é heurístico. Nenhuma API foi chamada e nenhum script foi executado.",
+    ""
+  ];
+  let total = 0;
+
+  for (const group of COMPAT_API_GROUPS) {
+    const names = group.names.filter((name) => {
+      const escaped = name.replaceAll(".", "\\.");
+      return new RegExp(escaped, "i").test(text);
+    });
+    if (!names.length) continue;
+    total += names.length;
+    lines.push("[" + group.title + "]");
+    for (const name of names) lines.push("  - " + name);
+    lines.push("  Tratamento sugerido: " + group.guidance, "");
+  }
+
+  lines.push("PRÓXIMAS ETAPAS");
+  if (total === 0) {
+    lines.push("- Nenhuma referência reconhecida foi encontrada no texto analisado.");
+    lines.push("- Código compactado, strings codificadas ou VM própria podem esconder as referências.");
+  } else {
+    lines.push("1. Separar cada API detectada das regras centrais do script.");
+    lines.push("2. Definir mocks explícitos apenas para dependências que você controla.");
+    lines.push("3. Deixar identidade real, hooks, rede e operações destrutivas indisponíveis por padrão.");
+    lines.push("4. Comparar cada saída com fixtures conhecidas e registrar chamadas não suportadas.");
+    lines.push("5. Se as APIs aparecerem somente depois de uma etapa de decodificação, analisar essa saída separadamente.");
+  }
+  lines.push("", "Total de nomes de API reconhecidos: " + total);
+  return { text: lines.join("\n"), total };
+}
+
+function renderCompatibilityReport(source) {
+  const report = buildCompatibilityReport(source);
+  compatPanel.hidden = false;
+  compatReport.value = report.text;
+  compatSummary.textContent = report.total
+    ? report.total + " referência(s) de API identificada(s). O mapa orienta mocks explícitos; não finge ser um executor real."
+    : "Nenhuma referência conhecida detectada. A análise é estática e pode não enxergar nomes escondidos em strings codificadas ou VM.";
+}
+
 function renderResult(result) {
   lastResult = result;
   results.hidden = false;
+  renderCompatibilityReport(input.value);
   $("summary").textContent = result.summary || result.error || "Análise concluída.";
   $("engineTag").textContent = (result.engine || "motor") + " v" + (result.version || "?") + " · " + (result.mode || "");
   $("format").textContent = result.format || (result.mode === "source" ? "Lua/Luau — análise estática" : "Formato não identificado");
@@ -299,6 +388,16 @@ downloadButton.addEventListener("click", () => {
   const recovered = lastResult?.mode === "bytecode"
     || Number(lastResult?.metrics?.transformations_total || 0) > 0;
   anchor.download = baseName + (recovered ? ".recovered.lua" : ".analysis.lua");
+  anchor.click();
+  URL.revokeObjectURL(url);
+});
+
+downloadCompatButton.addEventListener("click", () => {
+  const blob = new Blob([compatReport.value], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "fuscator-compatibility-report.txt";
   anchor.click();
   URL.revokeObjectURL(url);
 });
