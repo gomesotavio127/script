@@ -98,7 +98,11 @@ module.exports = async function fetchLoader(req, res) {
       remote = await fetch(current.href, {
         method: "GET",
         redirect: "manual",
-        headers: { Accept: "text/plain, application/javascript, application/x-lua, application/octet-stream;q=0.9, */*;q=0.1" },
+        headers: {
+          "User-Agent": "DeobfuscatorLab/1.0 (+https://github.com/gomesotavio127/script)",
+          "Accept": "text/plain, application/javascript, application/x-lua, application/octet-stream;q=0.9, */*;q=0.1",
+          "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8"
+        },
         signal: AbortSignal.timeout(TIMEOUT_MS)
       });
 
@@ -121,10 +125,16 @@ module.exports = async function fetchLoader(req, res) {
     }
 
     if (!remote) throw new Error("A fonte remota não retornou resposta.");
+    if (remote.status === 403) {
+      return res.status(502).json({
+        ok: false,
+        error: "O servidor da URL recusou o acesso (HTTP 403). O importador já enviou uma requisição identificada e de texto; essa fonte pode exigir login, token, cookies ou permitir acesso apenas pelo navegador. Use o link público direto/raw ou baixe o arquivo e selecione-o manualmente."
+      });
+    }
     if (!remote.ok) {
       return res.status(502).json({
         ok: false,
-        error: "A fonte remota respondeu HTTP " + remote.status + "."
+        error: "A fonte remota respondeu HTTP " + remote.status + ". Verifique se a URL aponta diretamente para o arquivo público."
       });
     }
 
