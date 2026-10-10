@@ -1870,7 +1870,7 @@ mod tests {
         let response = analyze_source(
             "return string.upper(string.char(bit32.bxor(65, 1), math.floor(66.8)))"
         );
-        assert!(response.contains("return \"@B\""), "nested decoder pipeline was not folded: {}", response);
+        assert!(response.contains(r#"return \"@B\""#), "nested decoder pipeline was not folded: {}", response);
         assert!(response.contains("\"analysis_rounds\""), "analysis-round metrics are missing");
         assert!(response.contains("\"static_calls_folded\""), "static call metrics are missing");
     }
@@ -1878,7 +1878,7 @@ mod tests {
     #[test]
     fn folds_string_format_and_base_tonumber() {
         let formatted = analyze_source("return string.format(\"%c%c-%02X\", 65, 66, 15)");
-        assert!(formatted.contains("return \"AB-0F\""), "string.format did not fold: {}", formatted);
+        assert!(formatted.contains(r#"return \"AB-0F\""#), "string.format did not fold: {}", formatted);
 
         let number = analyze_source("return tonumber(\"2A\", 16) + 1");
         assert!(number.contains("return 43"), "tonumber with a base did not fold: {}", number);
