@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - deobfuscator-engine-v1
+      - upgrade/tovek-luau-bytecode
   workflow_dispatch:
 
 permissions:
@@ -21,9 +22,9 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - name: Run unit tests
-        run: cargo test --manifest-path deobfuscator-engine/Cargo.toml
+        run: cargo +nightly-2026-06-15 test --manifest-path deobfuscator-engine/Cargo.toml
       - name: Compile Rust engine to WebAssembly
-        run: cargo build --manifest-path deobfuscator-engine/Cargo.toml --target wasm32-unknown-unknown --release
+        run: cargo +nightly-2026-06-15 build --manifest-path deobfuscator-engine/Cargo.toml --target wasm32-unknown-unknown --release
       - name: Test real bytecode through the compiled WebAssembly ABI
         run: node deobfuscator-engine/tests/wasm-smoke.mjs deobfuscator-engine/target/wasm32-unknown-unknown/release/deobfuscator_engine.wasm deobfuscator-engine/tests/fixtures/p03_unary.luac.hex
       - name: Prepare static deployment
