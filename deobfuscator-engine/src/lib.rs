@@ -2,7 +2,7 @@ use std::alloc::{alloc as raw_alloc, dealloc as raw_dealloc, Layout};
 use std::slice;
 use std::str;
 
-const VERSION: &str = "0.3.0";
+const VERSION: &str = "0.4.0";
 static mut LAST_OUTPUT_LEN: usize = 0;
 
 #[no_mangle]
@@ -2149,15 +2149,15 @@ mod tests {
     #[test]
     fn does_not_claim_success_when_no_rewrite_is_supported() {
         let response = analyze_source("return variable_name");
-        assert!(response.contains("no supported static transformation was applicable"));
+        assert!(response.contains("no transformed source was produced"));
         assert!(response.contains("\"transformations_total\":0"));
     }
 
     #[test]
     fn unchanged_source_is_not_emitted_as_recovered_output() {
         let response = analyze_source("return variable_name");
-        assert!(response.contains("\\\"output\\\":\\\"\\\""), "unchanged input should not be repeated as output: {}", response);
-        assert!(response.contains("\\\"output_bytes\\\":0"), "there should be no output bytes for a no-op: {}", response);
+        assert!(response.contains("\"output\":\"\""), "unchanged input should not be repeated as output: {}", response);
+        assert!(response.contains("\"output_bytes\":0"), "there should be no output bytes for a no-op: {}", response);
         assert!(response.contains("no transformed source was produced"));
     }
 
@@ -2167,7 +2167,7 @@ mod tests {
         let response = analyze_source(source);
         assert!(response.contains("Lua/Luau protected VM (Luraph)"));
         assert!(response.contains("Luraph v15"));
-        assert!(response.contains("\\\"output\\\":\\\"\\\""));
+        assert!(response.contains("\"output\":\"\""));
         assert!(response.contains("cannot reconstruct this custom virtual machine"));
     }
 
