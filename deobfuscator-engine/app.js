@@ -9,6 +9,7 @@ const output = $("output");
 const copyButton = $("copy");
 const downloadButton = $("download");
 const loaderActions = $("loaderActions");
+const loaderUrlInput = $("loaderUrl");
 const fetchPayloadButton = $("fetchPayload");
 const loaderHelp = $("loaderHelp");
 
@@ -20,8 +21,33 @@ let lastResult = null;
 let currentLoaderUrl = "";
 
 function extractCompatibleLoaderUrl(source) {
-  const match = source.match(/https:\/\/api[.]jnkie[.]com\/api\/v1\/luascripts\/public\/[a-f0-9]{64}\/download/i);
-  return match?.[0] || "";
+  // Normalize escaped URL separators often present in generated loaders.
+  const normalized = String(source || "")
+    .replaceAll("\\/", "/")
+    .replaceAll("\\u002F", "/")
+    .replaceAll("\\x2f", "/")
+    .replaceAll("\\x3a", ":");
+  const match = normalized.match(/https:\/\/api[.]jnkie[.]com\/api\/v1\/luascripts\/public\/[a-z0-9_-]{12,128}\/download/i);
+  if (!match) return "";
+
+  try {
+    const parsed = new URL(match[0]);
+    if (
+      parsed.protocol === "https:" &&
+      parsed.hostname.toLowerCase() === "api.jnkie.com" &&
+      !parsed.port &&
+      !parsed.username &&
+      !parsed.password &&
+      !parsed.search &&
+      !parsed.hash &&
+      /^\/api\/v1\/luascripts\/public\/[a-z0-9_-]{12,128}\/download$/i.test(parsed.pathname)
+    ) {
+      return parsed.href;
+    }
+  } catch {
+    // Invalid or incompatible URLs remain unavailable for import.
+  }
+  return "";
 }
 
 function setStatus(message, kind = "") {
@@ -96,11 +122,12 @@ function renderResult(result) {
 
   const isLoader = result.format === "Lua/Luau dynamic loader";
   currentLoaderUrl = isLoader ? extractCompatibleLoaderUrl(input.value) : "";
-  loaderActions.hidden = !currentLoaderUrl;
+  loaderUrlInput.value = currentLoaderUrl;
+  loaderActions.hidden = !isLoader;
   fetchPayloadButton.disabled = !currentLoaderUrl;
   loaderHelp.textContent = currentLoaderUrl
-    ? "URL Jnkie reconhecida. A ferramenta obterá só o texto, sem executar o conteúdo."
-    : "Este loader não contém uma URL Jnkie compatível para importação automática; selecione o arquivo local do payload.";
+    ? "URL compatível detectada. A ferramenta obterá somente o texto, sem executar o conteúdo."
+    : "URL não detectada automaticamente. Você pode colar a URL pública Jnkie compatível neste campo.";
   const hasOutput = typeof result.output === "string" && result.output.length > 0;
   const transformations = Number(result.metrics?.transformations_total || 0);
   output.value = hasOutput ? result.output : "";
@@ -170,10 +197,18 @@ $("form").addEventListener("submit", (event) => {
   runAnalysis(bytes, selectedMode);
 });
 
+loaderUrlInput.addEventListener("input", () => {
+  currentLoaderUrl = extractCompatibleLoaderUrl(loaderUrlInput.value);
+  fetchPayloadButton.disabled = !currentLoaderUrl;
+  loaderHelp.textContent = currentLoaderUrl
+    ? "URL compatível validada. A ferramenta obterá somente o texto, sem executar o conteúdo."
+    : "Cole uma URL pública Jnkie compatível com o formato aceito.";
+});
+
 fetchPayloadButton.addEventListener("click", async () => {
-  const url = currentLoaderUrl;
+  const url = extractCompatibleLoaderUrl(loaderUrlInput.value) || currentLoaderUrl;
   if (!url) {
-    setStatus("Nenhuma URL Jnkie compatível foi detectada.", "error");
+    setStatus("Cole uma URL pública Jnkie compatível no campo.", "error");
     return;
   }
 
