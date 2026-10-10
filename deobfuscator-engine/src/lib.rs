@@ -2,7 +2,7 @@ use std::alloc::{alloc as raw_alloc, dealloc as raw_dealloc, Layout};
 use std::slice;
 use std::str;
 
-const VERSION: &str = "0.1.0";
+const VERSION: &str = "0.2.0";
 static mut LAST_OUTPUT_LEN: usize = 0;
 
 #[no_mangle]
@@ -105,6 +105,7 @@ fn analyze_source(source: &str) -> String {
     let mut static_calls_folded = 0usize;
     let mut locals_propagated = 0usize;
     let mut branches_removed = 0usize;
+    let mut analysis_rounds = 0usize;
     let mut converged = looks_like_loader;
 
     if looks_like_loader {
@@ -112,7 +113,9 @@ fn analyze_source(source: &str) -> String {
         issues.push("Loader-only input detected. The remote payload was not fetched or executed; select a local file containing the protected source.".to_string());
     } else {
         // Deterministic fixed-point passes. This never executes the input.
-        for _ in 0..8 {
+        // Additional rounds allow nested decoder expressions to collapse in stages.
+        for _ in 0..32 {
+            analysis_rounds += 1;
             let before = output.clone();
             let (next, calls) = fold_static_calls(&output);
             static_calls_folded += calls;
@@ -130,7 +133,7 @@ fn analyze_source(source: &str) -> String {
         }
 
         if !converged {
-            issues.push("Static passes reached the eight-round safety limit; the output may contain further recoverable expressions.".to_string());
+            issues.push("Static passes reached the 32-round safety limit; the output may contain further recoverable expressions.".to_string());
         }
     }
 
@@ -138,7 +141,8 @@ fn analyze_source(source: &str) -> String {
     issues.extend(delimiter_issues);
     let findings = source_findings(source);
 
-    let transformations = expressions_folded + static_calls_folded + locals_propagated + branches_removed;
+    let transformations = comments_removed + strings_normalized + long_strings_normalized
+        + expressions_folded + static_calls_folded + locals_propagated + branches_removed;
     let bytes = source.as_bytes().len();
     let chars = source.chars().count();
     let format_name = if looks_like_loader {
@@ -159,7 +163,7 @@ fn analyze_source(source: &str) -> String {
     };
 
     format!(
-        "{{\"ok\":true,\"engine\":\"Deobfuscator Lab Rust\",\"version\":\"{}\",\"mode\":\"source\",\"format\":\"{}\",\"summary\":\"{}\",\"output\":\"{}\",\"metrics\":{{\"bytes\":{},\"characters\":{},\"output_bytes\":{},\"comments_removed\":{},\"strings_normalized\":{},\"long_strings_normalized\":{},\"constant_expressions_folded\":{},\"static_calls_folded\":{},\"local_constants_propagated\":{},\"constant_branches_removed\":{},\"transformations_total\":{},\"analysis_round_limit\":8,\"delimiter_check\":\"{}\"}},\"findings\":{},\"warnings\":{},\"scope\":\"Deterministic static source recovery; no script execution, network access, or model calls. Only understood constant expressions, selected pure string calls, simple local constants, and provably constant branches are rewritten. Unsupported syntax is preserved.\"}}",
+        "{{\"ok\":true,\"engine\":\"Deobfuscator Lab Rust\",\"version\":\"{}\",\"mode\":\"source\",\"format\":\"{}\",\"summary\":\"{}\",\"output\":\"{}\",\"metrics\":{{\"bytes\":{},\"characters\":{},\"output_bytes\":{},\"comments_removed\":{},\"strings_normalized\":{},\"long_strings_normalized\":{},\"constant_expressions_folded\":{},\"static_calls_folded\":{},\"local_constants_propagated\":{},\"constant_branches_removed\":{},\"transformations_total\":{},\"analysis_rounds\":{},\"analysis_passes\":{},\"analysis_round_limit\":32,\"delimiter_check\":\"{}\"}},\"findings\":{},\"warnings\":{},\"scope\":\"Deterministic static source recovery; no script execution, network access, or model calls. Only understood constant expressions, selected pure string calls, simple local constants, and provably constant branches are rewritten. Unsupported syntax is preserved.\"}}",
         VERSION,
         json_escape(format_name),
         json_escape(&summary),
@@ -175,6 +179,8 @@ fn analyze_source(source: &str) -> String {
         locals_propagated,
         branches_removed,
         transformations,
+        analysis_rounds,
+        analysis_rounds * 4,
         if delimiter_ok { "balanced" } else { "mismatch" },
         quote_json_array(&findings),
         quote_json_array(&issues)
@@ -1099,21 +1105,327 @@ fn bounded_lua_index(index: i64, len: usize, is_start: bool) -> usize {
     if is_start { (clamped - 1).max(0) as usize } else { clamped.max(0) as usize }
 }
 
+fn bit32_arg(value: &ConstValue) -> Option<u32> {
+    let n = value.as_number()?;
+    if !n.is_finite() { return None; }
+    Some(n.trunc().rem_euclid(4_294_967_296.0) as u32)
+}
+
+fn number_to_text(value: f64) -> Option<Vec<u8>> {
+    if !value.is_finite() { return None; }
+    Some(ConstValue::Number(value).to_lua().into_bytes())
+}
+
+fn parse_base_number(bytes: &[u8], base: u32) -> Option<f64> {
+    if !(2..=36).contains(&base) { return None; }
+    let text = std::str::from_utf8(bytes).ok()?.trim();
+    if text.is_empty() { return None; }
+    let (negative, digits) = if let Some(rest) = text.strip_prefix('-') {
+        (true, rest)
+    } else if let Some(rest) = text.strip_prefix('+') {
+        (false, rest)
+    } else {
+        (false, text)
+    };
+    if digits.is_empty() { return None; }
+    let mut value = 0.0f64;
+    for ch in digits.chars() {
+        let digit = ch.to_digit(base)?;
+        value = value * base as f64 + digit as f64;
+        if !value.is_finite() { return None; }
+    }
+    Some(if negative { -value } else { value })
+}
+
+fn format_static_string(format: &[u8], args: &[ConstValue]) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    let mut arg = 0usize;
+    while i < format.len() {
+        if format[i] != b'%' {
+            out.push(format[i]);
+            i += 1;
+            continue;
+        }
+        i += 1;
+        if i >= format.len() { return None; }
+        if format[i] == b'%' {
+            out.push(b'%');
+            i += 1;
+            continue;
+        }
+
+        let left_align = format[i] == b'-';
+        if matches!(format[i], b'-' | b'+' | b' ' | b'#' | b'0') {
+            // Only left alignment and zero-padding are unambiguous to implement
+            // locally; reject other printf flags instead of guessing.
+            if matches!(format[i], b'+' | b' ' | b'#') { return None; }
+            i += 1;
+        }
+        let mut width = 0usize;
+        while i < format.len() && format[i].is_ascii_digit() {
+            width = width.saturating_mul(10).saturating_add((format[i] - b'0') as usize);
+            if width > 256 { return None; }
+            i += 1;
+        }
+        let mut precision = None;
+        if i < format.len() && format[i] == b'.' {
+            i += 1;
+            let mut p = 0usize;
+            let mut digits = 0usize;
+            while i < format.len() && format[i].is_ascii_digit() {
+                p = p.saturating_mul(10).saturating_add((format[i] - b'0') as usize);
+                if p > 256 { return None; }
+                digits += 1;
+                i += 1;
+            }
+            precision = Some(if digits == 0 { 0 } else { p });
+        }
+        if i >= format.len() || arg >= args.len() { return None; }
+        let spec = format[i];
+        i += 1;
+        let value = &args[arg];
+        arg += 1;
+
+        let mut piece = match spec {
+            b's' => {
+                let mut bytes = match value {
+                    ConstValue::String(s) => s.clone(),
+                    _ => return None,
+                };
+                if let Some(p) = precision { bytes.truncate(p); }
+                bytes
+            }
+            b'q' => match value {
+                ConstValue::String(s) => quote_lua_bytes(s).into_bytes(),
+                _ => return None,
+            },
+            b'c' => {
+                let n = value.as_number()?;
+                if !n.is_finite() || n.fract() != 0.0 || !(0.0..=255.0).contains(&n) { return None; }
+                vec![n as u8]
+            }
+            b'd' | b'i' | b'u' | b'x' | b'X' | b'o' => {
+                let n = value.as_number()?;
+                if !n.is_finite() || n.fract() != 0.0 || n < i64::MIN as f64 || n > i64::MAX as f64 { return None; }
+                let integer = n as i64;
+                match spec {
+                    b'd' | b'i' => integer.to_string().into_bytes(),
+                    b'u' => (integer as u32).to_string().into_bytes(),
+                    b'x' => format!("{:x}", integer as u32).into_bytes(),
+                    b'X' => format!("{:X}", integer as u32).into_bytes(),
+                    b'o' => format!("{:o}", integer as u32).into_bytes(),
+                    _ => return None,
+                }
+            }
+            b'f' => {
+                let n = value.as_number()?;
+                if !n.is_finite() { return None; }
+                format!("{:.*}", precision.unwrap_or(6), n).into_bytes()
+            }
+            _ => return None,
+        };
+
+        if piece.len() < width {
+            let pad = width - piece.len();
+            let pad_byte = if !left_align && format[..i].contains(&b'0') && !format[..i].contains(&b'.') { b'0' } else { b' ' };
+            let mut padded = Vec::with_capacity(width);
+            if left_align {
+                padded.extend_from_slice(&piece);
+                padded.extend(std::iter::repeat(pad_byte).take(pad));
+            } else {
+                padded.extend(std::iter::repeat(pad_byte).take(pad));
+                padded.extend_from_slice(&piece);
+            }
+            piece = padded;
+        }
+        out.extend_from_slice(&piece);
+        if out.len() > 65536 { return None; }
+    }
+    if arg != args.len() { return None; }
+    Some(out)
+}
+
+fn fold_extended_static_call(namespace: &str, function_name: &str, args: &[ConstValue]) -> Option<ConstValue> {
+    if namespace == "string" {
+        match function_name {
+            "lower" if args.len() == 1 => {
+                let value = args[0].as_string()?;
+                return Some(ConstValue::String(value.iter().map(u8::to_ascii_lowercase).collect()));
+            }
+            "upper" if args.len() == 1 => {
+                let value = args[0].as_string()?;
+                return Some(ConstValue::String(value.iter().map(u8::to_ascii_uppercase).collect()));
+            }
+            "len" if args.len() == 1 => {
+                return Some(ConstValue::Number(args[0].as_string()?.len() as f64));
+            }
+            "format" if !args.is_empty() => {
+                return format_static_string(args[0].as_string()?, &args[1..]).map(ConstValue::String);
+            }
+            _ => {}
+        }
+    }
+
+    if namespace == "math" {
+        let numbers: Option<Vec<f64>> = args.iter().map(ConstValue::as_number).collect();
+        let numbers = numbers?;
+        let value = match function_name {
+            "floor" if numbers.len() == 1 => numbers[0].floor(),
+            "ceil" if numbers.len() == 1 => numbers[0].ceil(),
+            "abs" if numbers.len() == 1 => numbers[0].abs(),
+            "sqrt" if numbers.len() == 1 && numbers[0] >= 0.0 => numbers[0].sqrt(),
+            "sin" if numbers.len() == 1 => numbers[0].sin(),
+            "cos" if numbers.len() == 1 => numbers[0].cos(),
+            "tan" if numbers.len() == 1 => numbers[0].tan(),
+            "rad" if numbers.len() == 1 => numbers[0].to_radians(),
+            "deg" if numbers.len() == 1 => numbers[0].to_degrees(),
+            "exp" if numbers.len() == 1 => numbers[0].exp(),
+            "log" if numbers.len() == 1 && numbers[0] > 0.0 => numbers[0].ln(),
+            "pow" if numbers.len() == 2 => numbers[0].powf(numbers[1]),
+            "fmod" if numbers.len() == 2 && numbers[1] != 0.0 => numbers[0] % numbers[1],
+            "min" if !numbers.is_empty() => numbers.iter().copied().fold(f64::INFINITY, f64::min),
+            "max" if !numbers.is_empty() => numbers.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+            "clamp" if numbers.len() == 3 && numbers[1] <= numbers[2] => numbers[0].clamp(numbers[1], numbers[2]),
+            _ => return None,
+        };
+        return value.is_finite().then_some(ConstValue::Number(value));
+    }
+
+    if namespace == "bit32" {
+        let bits: Option<Vec<u32>> = args.iter().map(bit32_arg).collect();
+        let bits = bits?;
+        let result = match function_name {
+            "band" if !bits.is_empty() => bits.iter().copied().fold(u32::MAX, |a, b| a & b),
+            "bor" if !bits.is_empty() => bits.iter().copied().fold(0u32, |a, b| a | b),
+            "bxor" if !bits.is_empty() => bits.iter().copied().fold(0u32, |a, b| a ^ b),
+            "bnot" if bits.len() == 1 => !bits[0],
+            "lshift" | "rshift" | "arshift" if args.len() == 2 => {
+                let displacement = integer_value(&args[1])?;
+                let n = bits[0];
+                let shift = displacement.unsigned_abs().min(32) as u32;
+                if displacement >= 0 {
+                    match function_name {
+                        "lshift" => n.wrapping_shl(shift),
+                        "rshift" => n.wrapping_shr(shift),
+                        _ => ((n as i32).wrapping_shr(shift)) as u32,
+                    }
+                } else {
+                    match function_name {
+                        "lshift" => n.wrapping_shr(shift),
+                        "rshift" => n.wrapping_shl(shift),
+                        _ => n.wrapping_shl(shift),
+                    }
+                }
+            }
+            "lrotate" if args.len() == 2 => {
+                let displacement = integer_value(&args[1])?;
+                bits[0].rotate_left(displacement.rem_euclid(32) as u32)
+            }
+            "rrotate" if args.len() == 2 => {
+                let displacement = integer_value(&args[1])?;
+                bits[0].rotate_right(displacement.rem_euclid(32) as u32)
+            }
+            "extract" if args.len() == 2 || args.len() == 3 => {
+                let field = integer_value(&args[1])?;
+                let width = if args.len() == 3 { integer_value(&args[2])? } else { 1 };
+                if field < 0 || width <= 0 || width > 32 || field + width > 32 { return None; }
+                let mask = if width == 32 { u32::MAX } else { (1u32 << width) - 1 };
+                (bits[0] >> field) & mask
+            }
+            "replace" if args.len() == 3 || args.len() == 4 => {
+                let value = bits[1];
+                let field = integer_value(&args[2])?;
+                let width = if args.len() == 4 { integer_value(&args[3])? } else { 1 };
+                if field < 0 || width <= 0 || width > 32 || field + width > 32 { return None; }
+                let mask = if width == 32 { u32::MAX } else { (1u32 << width) - 1 };
+                let clear_mask = !(mask << field);
+                (bits[0] & clear_mask) | ((value & mask) << field)
+            }
+            _ => return None,
+        };
+        return Some(ConstValue::Number(result as f64));
+    }
+
+    if namespace == "utf8" && function_name == "char" && !args.is_empty() {
+        let mut output = String::new();
+        for value in args {
+            let number = value.as_number()?;
+            if !number.is_finite() || number.fract() != 0.0 || number < 0.0 || number > 0x10ffff as f64 { return None; }
+            output.push(char::from_u32(number as u32)?);
+            if output.len() > 65536 { return None; }
+        }
+        return Some(ConstValue::String(output.into_bytes()));
+    }
+
+    if namespace.is_empty() && function_name == "tostring" && args.len() == 1 {
+        return Some(match &args[0] {
+            ConstValue::String(value) => ConstValue::String(value.clone()),
+            ConstValue::Number(value) => ConstValue::String(number_to_text(*value)?),
+            ConstValue::Bool(value) => ConstValue::String(value.to_string().into_bytes()),
+            ConstValue::Nil => ConstValue::String(b"nil".to_vec()),
+        });
+    }
+
+    if namespace.is_empty() && function_name == "tonumber" && (args.len() == 1 || args.len() == 2) {
+        if args.len() == 2 {
+            let base = integer_value(&args[1])?;
+            if !(2..=36).contains(&base) { return Some(ConstValue::Nil); }
+            return Some(match &args[0] {
+                ConstValue::String(value) => parse_base_number(value, base as u32)
+                    .filter(|n| n.is_finite()).map(ConstValue::Number).unwrap_or(ConstValue::Nil),
+                _ => ConstValue::Nil,
+            });
+        }
+        return Some(match &args[0] {
+            ConstValue::Number(value) if value.is_finite() => ConstValue::Number(*value),
+            ConstValue::String(value) => {
+                let parsed = std::str::from_utf8(value).ok().map(str::trim).and_then(parse_number);
+                parsed.map(ConstValue::Number).unwrap_or(ConstValue::Nil)
+            }
+            _ => ConstValue::Nil,
+        });
+    }
+    None
+}
+
 fn fold_static_calls(source: &str) -> (String, usize) {
     let tokens = lex_source(source);
     let mut edits = Vec::new();
     let mut i = 0usize;
-    while i + 3 < tokens.len() {
-        let namespace = tokens[i].text.as_str();
-        if !matches!(namespace, "string" | "table") || tokens[i + 1].text != "." || tokens[i + 3].text != "(" {
+    while i + 1 < tokens.len() {
+        // Recognize only whitelisted pure standard-library calls, and avoid
+        // confusing object methods or names qualified by another namespace.
+        if i > 0 && matches!(tokens[i - 1].text.as_str(), "." | ":") {
             i += 1;
             continue;
         }
-        let function_name = tokens[i + 2].text.as_str();
-        let Some(close) = find_matching_token(&tokens, i + 3, "(", ")") else { i += 1; continue; };
-        let args = split_arguments(&tokens, i + 4, close);
-        let mut result: Option<ConstValue> = None;
+        let namespace = tokens[i].text.as_str();
+        let (call_namespace, function_name, open_index) =
+            if matches!(namespace, "string" | "table" | "math" | "bit32" | "utf8")
+                && i + 3 < tokens.len()
+                && tokens[i + 1].text == "."
+                && tokens[i + 2].kind == TokenKind::Ident
+                && tokens[i + 3].text == "("
+            {
+                (namespace, tokens[i + 2].text.as_str(), i + 3)
+            } else if matches!(namespace, "tonumber" | "tostring") && tokens[i + 1].text == "(" {
+                ("", namespace, i + 1)
+            } else {
+                i += 1;
+                continue;
+            };
 
+        let Some(close) = find_matching_token(&tokens, open_index, "(", ")") else { i += 1; continue; };
+        let args = split_arguments(&tokens, open_index + 1, close);
+        let static_values: Option<Vec<ConstValue>> = args.iter()
+            .map(|(a, b)| eval_constant_range(source, &tokens, *a, *b))
+            .collect();
+        let mut result: Option<ConstValue> = static_values.as_ref()
+            .and_then(|values| fold_extended_static_call(call_namespace, function_name, values));
+        if result.is_none() {
+
+        let namespace = call_namespace;
         if namespace == "string" && function_name == "char" {
             let mut bytes = Vec::new();
             let mut valid = true;
@@ -1187,6 +1499,7 @@ fn fold_static_calls(source: &str) -> (String, usize) {
                 }
                 if valid && combined.len() <= 65536 { result = Some(ConstValue::String(combined)); }
             }
+        }
         }
 
         if let Some(value) = result {
@@ -1550,6 +1863,39 @@ mod tests {
         let response = analyze_source("while false do\n return 12345\nend\nreturn 7");
         assert!(!response.contains("return 12345"), "dead loop body remains: {}", response);
         assert!(response.contains("return 7"), "live source should be preserved: {}", response);
+    }
+
+    #[test]
+    fn folds_nested_bit32_math_and_string_calls_in_multiple_rounds() {
+        let response = analyze_source(
+            "return string.upper(string.char(bit32.bxor(65, 1), math.floor(66.8)))"
+        );
+        assert!(response.contains("return \"@B\""), "nested decoder pipeline was not folded: {}", response);
+        assert!(response.contains("\"analysis_rounds\""), "analysis-round metrics are missing");
+        assert!(response.contains("\"static_calls_folded\""), "static call metrics are missing");
+    }
+
+    #[test]
+    fn folds_string_format_and_base_tonumber() {
+        let formatted = analyze_source("return string.format(\"%c%c-%02X\", 65, 66, 15)");
+        assert!(formatted.contains("return \"AB-0F\""), "string.format did not fold: {}", formatted);
+
+        let number = analyze_source("return tonumber(\"2A\", 16) + 1");
+        assert!(number.contains("return 43"), "tonumber with a base did not fold: {}", number);
+    }
+
+    #[test]
+    fn folds_utf8_and_ascii_string_helpers() {
+        let response = analyze_source("return string.len(string.upper(utf8.char(97, 98, 99)))");
+        assert!(response.contains("return 3"), "UTF-8/string helper chain did not fold: {}", response);
+    }
+
+    #[test]
+    fn folds_bit32_extract_replace_and_rotate() {
+        let response = analyze_source(
+            "return bit32.extract(bit32.replace(bit32.lrotate(1, 1), 3, 1, 2), 1, 2)"
+        );
+        assert!(response.contains("return 3"), "bit32 constant operations did not fold: {}", response);
     }
 
     #[test]
