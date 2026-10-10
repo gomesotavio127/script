@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 description = "Conservative static analysis and source normalization for Lua/Luau"
 
+[dependencies]
+luau-core = { git = "https://github.com/PumbaaDev/luau-decompiler", rev = "ee07098c31e11601a9ca434bc12932a4ded65f7b" }
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 
