@@ -3,7 +3,7 @@ let instancePromise;
 async function getEngine() {
   if (!instancePromise) {
     instancePromise = (async () => {
-      const response = await fetch(new URL("./engine.wasm", self.location.href));
+      const response = await fetch(new URL("./engine.wasm?v=20261010-2", self.location.href));
       if (!response.ok) throw new Error("Não foi possível carregar o motor Rust.");
       const bytes = await response.arrayBuffer();
       const { instance } = await WebAssembly.instantiate(bytes, {});
