@@ -1,5 +1,5 @@
 const MAX_BYTES = 4 * 1024 * 1024;
-const LOADER_URL = /^https:\/\/api\.jnkie\.com\/api\/v1\/luascripts\/public\/[a-f0-9]{64}\/download$/i;
+const LOADER_URL = /^https:\/\/api\.jnkie\.com\/api\/v1\/luascripts\/public\/[a-z0-9_-]{12,128}\/download$/i;
 
 module.exports = async function fetchLoader(req, res) {
   res.setHeader("Cache-Control", "no-store");
