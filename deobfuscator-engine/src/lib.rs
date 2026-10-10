@@ -2,7 +2,7 @@ use std::alloc::{alloc as raw_alloc, dealloc as raw_dealloc, Layout};
 use std::slice;
 use std::str;
 
-const VERSION: &str = "0.2.0";
+const VERSION: &str = "0.3.0";
 static mut LAST_OUTPUT_LEN: usize = 0;
 
 #[no_mangle]
@@ -530,6 +530,27 @@ fn source_findings(source: &str) -> Vec<String> {
     findings
 }
 
+fn try_tovek_decompile(bytes: &[u8]) -> Result<(String, u8), String> {
+    let mut errors = Vec::new();
+
+    // Standard raw chunks use key 0; Roblox client-encoded chunks commonly use 203.
+    // This is static bytecode parsing only: the input is never executed.
+    for key in [0u8, 203u8] {
+        match luau_lifter::try_decompile_bytecode_with_script_name(bytes, key, None) {
+            Ok(source)
+                if !source.trim().is_empty()
+                    && !source.starts_with("-- Roblox could not compile this script") =>
+            {
+                return Ok((source, key));
+            }
+            Ok(_) => errors.push(format!("key {} produced a compiler-diagnostic stub", key)),
+            Err(error) => errors.push(format!("key {}: {}", key, error)),
+        }
+    }
+
+    Err(errors.join("; "))
+}
+
 fn inspect_bytecode(bytes: &[u8]) -> String {
     let size = bytes.len();
 
@@ -564,6 +585,35 @@ fn inspect_bytecode(bytes: &[u8]) -> String {
             );
         }
         Err(error) => {
+            // Newer Luau serializations can exceed the legacy decoder's v3–v9 range.
+            // Fall back to the maintained Tovek lifter, which supports v4–v14.
+            if let Ok((source, encode_key)) = try_tovek_decompile(bytes) {
+                let lines = source.lines().count();
+                let bytecode_version = luau_core::bytecode_version(bytes)
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+                let summary = format!(
+                    "Bytecode recovered by Tovek v2.5.1 (serialization version {}, decode key {}). This is reconstructed source, not the original text.",
+                    bytecode_version, encode_key
+                );
+                return format!(
+                    "{{\\"ok\\":true,\\"engine\\":\\"Deobfuscator Lab Rust + Tovek\\",\\"version\\":\\"{}\\",\\"mode\\":\\"bytecode\\",\\"format\\":\\"Luau bytecode\\",\\"summary\\":\\"{}\\",\\"output\\":\\"{}\\",\\"metrics\\":{{\\"bytes\\":{},\\"bytecode_version\\":\\"{}\\",\\"decode_key\\":{},\\"output_characters\\":{},\\"output_lines\\":{}}},\\"findings\\":{},\\"warnings\\":{},\\"scope\\":\\"Static bytecode decompilation by Tovek v2.5.1; no script execution. Original comments and source identifiers may not be recoverable.\\"}}",
+                    VERSION,
+                    json_escape(&summary),
+                    json_escape(&source),
+                    size,
+                    json_escape(&bytecode_version),
+                    encode_key,
+                    source.chars().count(),
+                    lines,
+                    quote_json_array(&vec![
+                        "Recovered with the Tovek fallback after the legacy decoder rejected the chunk.".to_string()
+                    ]),
+                    quote_json_array(&vec![
+                        "The output is reconstructed from bytecode and may not match original source formatting or names.".to_string()
+                    ])
+                );
+            }
             let message = format!("{:#}", error);
             let sample = bytes.iter().take(16).map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
             let version = luau_core::bytecode_version(bytes)
@@ -1910,6 +1960,15 @@ mod tests {
         assert_eq!(bytes.len(), 200);
         assert_eq!(luau_core::bytecode_version(&bytes), Some(6));
         let source = luau_core::decompile(&bytes).expect("fixture should decompile");
+        assert!(!source.trim().is_empty());
+        assert!(source.contains("function") || source.contains("return") || source.contains("local"));
+    }
+
+    #[test]
+    fn tovek_backend_decompiles_known_luau_bytecode_fixture() {
+        let bytes = decode_hex(include_str!("../tests/fixtures/p03_unary.luac.hex"));
+        let (source, key) = try_tovek_decompile(&bytes).expect("Tovek should decompile a known v6 fixture");
+        assert_eq!(key, 0);
         assert!(!source.trim().is_empty());
         assert!(source.contains("function") || source.contains("return") || source.contains("local"));
     }
