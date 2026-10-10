@@ -8,12 +8,21 @@ const results = $("results");
 const output = $("output");
 const copyButton = $("copy");
 const downloadButton = $("download");
+const loaderActions = $("loaderActions");
+const fetchPayloadButton = $("fetchPayload");
+const loaderHelp = $("loaderHelp");
 
 let fileData = null;
 let fileName = "";
 let worker = null;
 let initialized = false;
 let lastResult = null;
+let currentLoaderUrl = "";
+
+function extractCompatibleLoaderUrl(source) {
+  const match = source.match(/https:\/\/api[.]jnkie[.]com\/api\/v1\/luascripts\/public\/[a-f0-9]{64}\/download/i);
+  return match?.[0] || "";
+}
 
 function setStatus(message, kind = "") {
   statusEl.textContent = message;
@@ -86,6 +95,12 @@ function renderResult(result) {
   }
 
   const isLoader = result.format === "Lua/Luau dynamic loader";
+  currentLoaderUrl = isLoader ? extractCompatibleLoaderUrl(input.value) : "";
+  loaderActions.hidden = !currentLoaderUrl;
+  fetchPayloadButton.disabled = !currentLoaderUrl;
+  loaderHelp.textContent = currentLoaderUrl
+    ? "URL Jnkie reconhecida. A ferramenta obterá só o texto, sem executar o conteúdo."
+    : "Este loader não contém uma URL Jnkie compatível para importação automática; selecione o arquivo local do payload.";
   const hasOutput = typeof result.output === "string" && result.output.length > 0;
   const transformations = Number(result.metrics?.transformations_total || 0);
   output.value = hasOutput ? result.output : "";
@@ -118,6 +133,26 @@ function renderResult(result) {
   );
 }
 
+function runAnalysis(bytes, selectedMode) {
+  if (!bytes?.byteLength) {
+    setStatus("Entrada vazia.", "error");
+    return;
+  }
+  if (bytes.byteLength > 32 * 1024 * 1024) {
+    setStatus("O limite da versão 1 é 32 MiB.", "error");
+    return;
+  }
+
+  runButton.disabled = true;
+  runButton.textContent = "ANALISANDO…";
+  setStatus("Analisando " + prettyBytes(bytes.byteLength) + " com o motor Rust…");
+  results.hidden = true;
+  const transfer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+    ? bytes.buffer
+    : bytes.slice().buffer;
+  getWorker().postMessage({ bytes: transfer, mode: selectedMode }, [transfer]);
+}
+
 $("form").addEventListener("submit", (event) => {
   event.preventDefault();
   const selectedMode = mode.value === "bytecode" ? 1 : 0;
@@ -132,17 +167,53 @@ $("form").addEventListener("submit", (event) => {
     }
     bytes = new TextEncoder().encode(value);
   }
+  runAnalysis(bytes, selectedMode);
+});
 
-  if (bytes.byteLength > 32 * 1024 * 1024) {
-    setStatus("O limite da versão 1 é 32 MiB.", "error");
+fetchPayloadButton.addEventListener("click", async () => {
+  const url = currentLoaderUrl;
+  if (!url) {
+    setStatus("Nenhuma URL Jnkie compatível foi detectada.", "error");
     return;
   }
 
-  runButton.disabled = true;
-  runButton.textContent = "ANALISANDO…";
-  setStatus("Analisando " + prettyBytes(bytes.byteLength) + " com o motor Rust…");
-  results.hidden = true;
-  getWorker().postMessage({ bytes: bytes.buffer, mode: selectedMode }, [bytes.buffer]);
+  fetchPayloadButton.disabled = true;
+  setStatus("Obtendo somente o texto do payload remoto — o script não será executado…", "warning");
+  try {
+    const response = await fetch("./api/fetch-loader", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "text/plain, application/json" },
+      body: JSON.stringify({ url })
+    });
+
+    if (!response.ok) {
+      let message = "Falha ao obter o payload (HTTP " + response.status + ").";
+      try {
+        const details = await response.json();
+        if (details?.error) message = details.error;
+      } catch {}
+      throw new Error(message);
+    }
+
+    const text = await response.text();
+    const bytes = new TextEncoder().encode(text);
+    if (!text.trim() || bytes.byteLength === 0) {
+      throw new Error("A fonte remota não retornou código-fonte textual.");
+    }
+    if (bytes.byteLength > 32 * 1024 * 1024) {
+      throw new Error("O payload ultrapassa o limite de 32 MiB do motor.");
+    }
+
+    input.value = text;
+    mode.value = "source";
+    fileData = null;
+    fileName = "loader-payload.lua";
+    currentLoaderUrl = "";
+    runAnalysis(bytes, 0);
+  } catch (error) {
+    fetchPayloadButton.disabled = false;
+    setStatus((error?.message || "Falha ao obter o payload.") + " Você também pode baixar o arquivo manualmente e selecioná-lo acima.", "error");
+  }
 });
 
 fileInput.addEventListener("change", async () => {
