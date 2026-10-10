@@ -5,7 +5,6 @@ const fs = require("node:fs");
 const path = require("node:path");
 const dns = require("node:dns").promises;
 const net = require("node:net");
-const http = require("node:http");
 const https = require("node:https");
 
 const ROOT = __dirname;
