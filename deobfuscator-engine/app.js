@@ -24,6 +24,9 @@ let initialized = false;
 let engineReady = false;
 let lastResult = null;
 let currentLoaderUrl = "";
+const autoFetchedLoaderUrls = new Set();
+let autoFetchDepth = 0;
+const MAX_AUTO_FETCH_DEPTH = 4;
 
 function extractCompatibleLoaderUrl(source) {
   const normalized = String(source || "")
@@ -183,6 +186,68 @@ function renderCompatibilityReport(source) {
     : "Nenhuma referência conhecida detectada. A análise é estática e pode não enxergar nomes escondidos em strings codificadas ou VM.";
 }
 
+async function fetchLoaderUrlAndAnalyze(url, automatic = false) {
+  if (!engineReady) {
+    setStatus("O motor Rust ainda não está pronto. Recarregue a página se o aviso persistir.", "error");
+    return false;
+  }
+  if (!url) {
+    setStatus("Não encontrei uma URL HTTP/HTTPS no loader. Cole a URL pública no campo de importação.", "error");
+    return false;
+  }
+
+  fetchPayloadButton.disabled = true;
+  setStatus(
+    automatic
+      ? "Loader reconhecido. Capturando o texto remoto e enviando-o automaticamente para análise…"
+      : "Obtendo somente o texto do payload remoto — o script não será executado…",
+    "warning"
+  );
+  try {
+    const response = await fetch("/api/fetch-loader", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "text/plain, application/json" },
+      body: JSON.stringify({ url })
+    });
+
+    if (!response.ok) {
+      let message = "Falha ao obter o payload (HTTP " + response.status + ").";
+      try {
+        const details = await response.json();
+        if (details?.error) message = details.error;
+      } catch {}
+      throw new Error(message);
+    }
+
+    const sourceText = await response.text();
+    const bytes = new TextEncoder().encode(sourceText);
+    if (!sourceText.trim() || bytes.byteLength === 0) {
+      throw new Error("A fonte remota não retornou código-fonte textual.");
+    }
+    if (bytes.byteLength > 32 * 1024 * 1024) {
+      throw new Error("O payload ultrapassa o limite de 32 MiB do motor.");
+    }
+
+    input.value = sourceText;
+    mode.value = "source";
+    fileData = null;
+    fileName = "loader-payload.lua";
+    currentLoaderUrl = "";
+    runAnalysis(bytes, 0);
+    return true;
+  } catch (error) {
+    fetchPayloadButton.disabled = !engineReady || !extractCompatibleLoaderUrl(loaderUrlInput.value);
+    const reason = error?.message || "Falha ao obter o payload.";
+    setStatus(
+      automatic
+        ? "A captura automática não conseguiu obter a fonte: " + reason
+        : reason + " Você também pode baixar o arquivo manualmente e selecioná-lo acima.",
+      "error"
+    );
+    return false;
+  }
+}
+
 function renderResult(result) {
   lastResult = result;
   results.hidden = false;
@@ -214,8 +279,8 @@ function renderResult(result) {
   }
 
   const isLoader = result.format === "Lua/Luau dynamic loader";
-  currentLoaderUrl = extractCompatibleLoaderUrl(loaderUrlInput.value) ||
-    (isLoader ? extractCompatibleLoaderUrl(input.value) : "");
+  const urlInsideLoader = isLoader ? extractCompatibleLoaderUrl(input.value) : "";
+  currentLoaderUrl = urlInsideLoader || extractCompatibleLoaderUrl(loaderUrlInput.value);
   loaderUrlInput.value = currentLoaderUrl;
   loaderActions.hidden = false;
   fetchPayloadButton.disabled = !currentLoaderUrl || !engineReady;
@@ -252,6 +317,26 @@ function renderResult(result) {
     statusMessage,
     isLoader || result.warnings?.length || (result.mode === "source" && transformations === 0) ? "warning" : "success"
   );
+
+  // A source loader with a direct public URL is fetched automatically, then
+  // the returned text is passed through the same Rust analysis pipeline.
+  // This does not execute Lua/Luau and never repeats the same URL in a chain.
+  if (
+    isLoader &&
+    currentLoaderUrl &&
+    autoFetchDepth < MAX_AUTO_FETCH_DEPTH &&
+    !autoFetchedLoaderUrls.has(currentLoaderUrl)
+  ) {
+    const url = currentLoaderUrl;
+    autoFetchedLoaderUrls.add(url);
+    autoFetchDepth += 1;
+    loaderHelp.textContent = "Loader detectado. Tentando capturar automaticamente a fonte pública antes da desofuscação.";
+    void fetchLoaderUrlAndAnalyze(url, true);
+  } else if (isLoader && !currentLoaderUrl) {
+    loaderHelp.textContent = "Não foi possível extrair uma URL direta deste loader. Cole a URL pública ou importe uma captura local.";
+  } else if (isLoader && autoFetchDepth >= MAX_AUTO_FETCH_DEPTH) {
+    loaderHelp.textContent = "A cadeia de loaders atingiu o limite de segurança. Importe a próxima fonte manualmente.";
+  }
 }
 
 function runAnalysis(bytes, selectedMode) {
@@ -276,6 +361,8 @@ function runAnalysis(bytes, selectedMode) {
 
 $("form").addEventListener("submit", (event) => {
   event.preventDefault();
+  autoFetchedLoaderUrls.clear();
+  autoFetchDepth = 0;
   const selectedMode = mode.value === "bytecode" ? 1 : 0;
   let bytes;
   if (selectedMode === 1 && fileData) {
@@ -302,52 +389,7 @@ loaderUrlInput.addEventListener("input", () => {
 
 fetchPayloadButton.addEventListener("click", async () => {
   const url = extractCompatibleLoaderUrl(loaderUrlInput.value) || currentLoaderUrl;
-  if (!engineReady) {
-    setStatus("O motor Rust ainda não está pronto. Recarregue a página se o aviso persistir.", "error");
-    return;
-  }
-  if (!url) {
-    setStatus("Cole uma URL pública HTTP/HTTPS válida no campo.", "error");
-    return;
-  }
-
-  fetchPayloadButton.disabled = true;
-  setStatus("Obtendo somente o texto do payload remoto — o script não será executado…", "warning");
-  try {
-    const response = await fetch("/api/fetch-loader", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Accept": "text/plain, application/json" },
-      body: JSON.stringify({ url })
-    });
-
-    if (!response.ok) {
-      let message = "Falha ao obter o payload (HTTP " + response.status + ").";
-      try {
-        const details = await response.json();
-        if (details?.error) message = details.error;
-      } catch {}
-      throw new Error(message);
-    }
-
-    const text = await response.text();
-    const bytes = new TextEncoder().encode(text);
-    if (!text.trim() || bytes.byteLength === 0) {
-      throw new Error("A fonte remota não retornou código-fonte textual.");
-    }
-    if (bytes.byteLength > 32 * 1024 * 1024) {
-      throw new Error("O payload ultrapassa o limite de 32 MiB do motor.");
-    }
-
-    input.value = text;
-    mode.value = "source";
-    fileData = null;
-    fileName = "loader-payload.lua";
-    currentLoaderUrl = "";
-    runAnalysis(bytes, 0);
-  } catch (error) {
-    fetchPayloadButton.disabled = !engineReady || !extractCompatibleLoaderUrl(loaderUrlInput.value);
-    setStatus((error?.message || "Falha ao obter o payload.") + " Você também pode baixar o arquivo manualmente e selecioná-lo acima.", "error");
-  }
+  await fetchLoaderUrlAndAnalyze(url, false);
 });
 
 fileInput.addEventListener("change", async () => {
@@ -418,6 +460,11 @@ $("clear").addEventListener("click", () => {
   fileData = null;
   fileName = "";
   lastResult = null;
+  autoFetchedLoaderUrls.clear();
+  autoFetchDepth = 0;
+  currentLoaderUrl = "";
+  loaderUrlInput.value = "";
+  fetchPayloadButton.disabled = true;
   results.hidden = true;
   output.value = "";
   setStatus("Pronto para analisar.");
