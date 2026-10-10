@@ -9,7 +9,7 @@ A conservative, deterministic Lua/Luau static-analysis core compiled to WebAssem
 - Propagates simple literal local constants until reassignment or a control-flow boundary.
 - Removes `if` branches only when every condition needed for the decision is statically known; removes `while false do ... end` loops.
 - Reports the number of rewrites and warns when no supported transform applied. The output is explicitly partial; this is not a complete Lua parser or a full devirtualizer.
-- Never retrieves a loader's remote payload and never executes the analyzed script.
+- Optional, user-triggered retrieval of public Jnkie loader URLs is handled by a strict server-side allowlist; payload text is bounded, HTML block pages are rejected, and no script is executed.
 - Recognizes unsupported bytecode/container signatures and does not fabricate source.
 
 ## Bytecode
@@ -32,4 +32,4 @@ This is a real decoder integration, not an original decompiler implementation fr
 - Deploy with Cloudflare Pages, using this directory as root and public as output directory.
 
 ## Precision contract
-The engine never executes the analyzed script, guesses missing payloads, or labels partial output as a complete decompilation. The source-mode passes are intentionally bounded and conservative. They are not a replacement for a full Luau parser or an opcode-level devirtualizer; additional syntax and VM formats should be added only with tests and captured fixtures.
+The engine never executes the analyzed script, guesses missing payloads, or labels partial output as a complete decompilation. The explicit loader-import feature only retrieves text from a narrowly allowlisted public Jnkie download URL. The source-mode passes are intentionally bounded and conservative. They are not a replacement for a full Luau parser or an opcode-level devirtualizer; additional syntax and VM formats should be added only with tests and captured fixtures.
